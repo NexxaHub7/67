@@ -80,7 +80,11 @@ local STATE = {
     FLY_CONNS = {},
     FLY_BV = nil,
     FLY_BG = nil,
+    ANTIFLING_ON = false,
+    EMPTYING = false,
+    EMPTY_TARGET_USER = "",
 }
+local EMPTY_TARGETS = {}
 
 local antiRagdollConns = {}
 local antiRagdollRunning = false
@@ -1030,6 +1034,175 @@ task.spawn(function()
     end
 end)
 
+
+----------------------------------------------------------------
+-- ANTI FLING + EMPTY DATABASE
+----------------------------------------------------------------
+
+local function antiFlingLoop()
+    task.spawn(function()
+        while STATE.ANTIFLING_ON do
+            task.wait(0.05)
+            local ch = LocalPlayer.Character
+            local h = ch and ch:FindFirstChild("HumanoidRootPart")
+            if h then
+                local v = h.AssemblyLinearVelocity
+                if v.Magnitude > 80 then
+                    h.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    pcall(function()
+                        h.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                    end)
+                    pcall(function()
+                        h.RotVelocity = Vector3.new(0, 0, 0)
+                    end)
+                    if v.Magnitude > 200 then
+                        pcall(doTPBase)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function findPlayerPlotByUsername(user)
+    local ps = Workspace:FindFirstChild("Plots")
+    if not ps then return nil end
+    for _, plot in ipairs(ps:GetChildren()) do
+        local sign = plot:FindFirstChild("PlotSign")
+        if sign then
+            local nm = sign:FindFirstChild("Name", true)
+                or sign:FindFirstChild("Username", true)
+                or sign:FindFirstChild("DisplayName", true)
+            if nm and nm.Text and nm.Text:lower():find(user:lower(), 1, true) then
+                return plot
+            end
+        end
+        local podiums = plot:FindFirstChild("AnimalPodiums")
+        if podiums then
+            for _, podium in ipairs(podiums:GetChildren()) do
+                local b = podium:FindFirstChild("Base")
+                if b then
+                    local oh = b:FindFirstChild("AnimalOverhead", true)
+                    local data = oh and readOverhead(oh)
+                    if data and data.displayName and data.displayName:lower():find(user:lower(), 1, true) then
+                        return plot
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function findMyEmptySlots()
+    local ps = Workspace:FindFirstChild("Plots")
+    if not ps then return 0 end
+    local my = ps:FindFirstChild(STATE.MY_UUID)
+    if not my then return 0 end
+    local podiums = my:FindFirstChild("AnimalPodiums")
+    if not podiums then return 0 end
+    local n = 0
+    for _, podium in ipairs(podiums:GetChildren()) do
+        local b = podium:FindFirstChild("Base")
+        if b then
+            local oh = b:FindFirstChild("AnimalOverhead", true)
+            local data = oh and readOverhead(oh)
+            if not data or data.displayName == "" or data.displayName == "Empty" then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
+local function collectStealableFromPlot(plot)
+    local list = {}
+    if not plot then return list end
+    local podiums = plot:FindFirstChild("AnimalPodiums")
+    if not podiums then return list end
+    for _, podium in ipairs(podiums:GetChildren()) do
+        local b = podium:FindFirstChild("Base")
+        if b then
+            local oh = b:FindFirstChild("AnimalOverhead", true)
+            local data = oh and readOverhead(oh)
+            if data and data.displayName ~= "" and data.displayName ~= "Empty" then
+                local st = data.stolen:upper()
+                if st ~= "IN FUSE" and st ~= "FUSE" and st ~= "FUSING" then
+                    local pr = getPodiumPrompt(podium)
+                    if not pr then
+                        for _, d in ipairs(b:GetDescendants()) do
+                            if d:IsA("ProximityPrompt") then pr = d break end
+                        end
+                    end
+                    if pr and isStealablePrompt(pr) then
+                        table.insert(list, {
+                            plot = plot.Name,
+                            slot = podium.Name,
+                            nombre = data.displayName,
+                            rarity = data.rarity,
+                            gen = parseMoney(data.generation),
+                            prompt = pr,
+                            base = b,
+                        })
+                    end
+                end
+            end
+        end
+    end
+    return list
+end
+
+local function emptyDatabase()
+    if STATE.EMPTYING then return end
+    if not STATE.EMPTY_TARGET_USER or STATE.EMPTY_TARGET_USER == "" then
+        if _G.BrainrotNotify then
+            _G.BrainrotNotify("Empty DB", "Primero ingresa un usuario y dale Save")
+        end
+        return
+    end
+    STATE.EMPTYING = true
+    task.spawn(function()
+        while STATE.EMPTYING do
+            if findMyEmptySlots() <= 0 then
+                if _G.BrainrotNotify then
+                    _G.BrainrotNotify("Empty DB", "Tu base esta llena")
+                end
+                STATE.EMPTYING = false
+                break
+            end
+            local plot = findPlayerPlotByUsername(STATE.EMPTY_TARGET_USER)
+            if not plot then
+                if _G.BrainrotNotify then
+                    _G.BrainrotNotify("Empty DB", "No encontre al usuario")
+                end
+                STATE.EMPTYING = false
+                break
+            end
+            local list = collectStealableFromPlot(plot)
+            if #list == 0 then
+                if _G.BrainrotNotify then
+                    _G.BrainrotNotify("Empty DB", "Base vaciada")
+                end
+                STATE.EMPTYING = false
+                break
+            end
+            table.sort(list, function(a, b)
+                return (a.gen or 0) > (b.gen or 0)
+            end)
+            local obj = list[1]
+            pcall(function()
+                tpToClown(obj, true)
+            end)
+            if not STATE.INSTANT_STEAL_ON then
+                pcall(function()
+                    LocalPlayer:SetAttribute("InstantSteal", true)
+                end)
+            end
+            task.wait(1.2)
+        end
+    end)
+end
+
 ----------------------------------------------------------------
 -- GUI PROPIA  (animada / minimize total / open pequeño)
 ----------------------------------------------------------------
@@ -1660,6 +1833,7 @@ local ESPPage = createTab("ESP", 4)
 local MiscPage = createTab("Misc", 5)
 local BasePage = createTab("Base", 6)
 local RoboPage = createTab("Robo", 7)
+local UtilsPage = createTab("Utils", 8)
 
 section(MainPage, "Auto")
 toggle(MainPage, "Auto Scan", true, function(v) STATE.AUTO_SCAN_ON = v end)
@@ -1707,6 +1881,10 @@ toggle(MiscPage, "Speed Boost (50)", false, function(v) setSpeed(v) end)
 toggle(MiscPage, "Infinite Jump", false, function(v) setInfJump(v) end)
 toggle(MiscPage, "Noclip", false, function(v) setNoclip(v) end)
 toggle(MiscPage, "God Mode", false, function(v) setGod(v) end)
+toggle(MiscPage, "Anti-Fling", false, function(v)
+    STATE.ANTIFLING_ON = v
+    if v then antiFlingLoop() end
+end)
 section(MiscPage, "Rendimiento")
 toggle(MiscPage, "FPS Boost", false, function(v) setFPS(v) end)
 section(MiscPage, "Fly")
@@ -1742,6 +1920,91 @@ toggle(RoboPage, "Auto-Bate Equip", false, function(v) STATE.AUTOBATE_ON = v end
 button(RoboPage, "Equipar bate ahora", function()
     equiparBate()
     notify("Auto-Bate", "Intentado equipar")
+end)
+
+-- ===== UTILS: Empty Database =====
+section(UtilsPage, "Empty Database")
+
+local emptyInfo = Instance.new("TextLabel")
+emptyInfo.Size = UDim2.new(1, 0, 0, 32)
+emptyInfo.BackgroundTransparency = 1
+emptyInfo.Text = "Ingresa usuario, Save, y activa Empty para vaciar su base."
+emptyInfo.Font = Enum.Font.Gotham
+emptyInfo.TextSize = 11
+emptyInfo.TextColor3 = Theme.TextDim
+emptyInfo.TextXAlignment = Enum.TextXAlignment.Left
+emptyInfo.TextWrapped = true
+emptyInfo.Parent = UtilsPage
+
+local userBox = Instance.new("TextBox")
+userBox.Size = UDim2.new(1, 0, 0, 34)
+userBox.BackgroundColor3 = Theme.Bg
+userBox.BorderSizePixel = 0
+userBox.ClearTextOnFocus = false
+userBox.PlaceholderText = "Username del target..."
+userBox.PlaceholderColor3 = Theme.TextDim
+userBox.Text = STATE.EMPTY_TARGET_USER or ""
+userBox.Font = Enum.Font.Gotham
+userBox.TextSize = 13
+userBox.TextColor3 = Theme.Text
+userBox.TextXAlignment = Enum.TextXAlignment.Left
+userBox.Parent = UtilsPage
+corner(userBox, 9)
+local userPad = Instance.new("UIPadding")
+userPad.PaddingLeft = UDim.new(0, 10)
+userPad.Parent = userBox
+
+button(UtilsPage, "Save usuario", function()
+    local u = (userBox.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if u == "" then
+        notify("Empty DB", "Escribe un usuario")
+        return
+    end
+    STATE.EMPTY_TARGET_USER = u
+    EMPTY_TARGETS[u] = true
+    notify("Empty DB", "Target: " .. u)
+end)
+
+local emptyStatus = Instance.new("TextLabel")
+emptyStatus.Size = UDim2.new(1, 0, 0, 20)
+emptyStatus.BackgroundTransparency = 1
+emptyStatus.Text = "Target: (ninguno)"
+emptyStatus.Font = Enum.Font.GothamMedium
+emptyStatus.TextSize = 12
+emptyStatus.TextColor3 = Theme.Accent2
+emptyStatus.TextXAlignment = Enum.TextXAlignment.Left
+emptyStatus.Parent = UtilsPage
+
+task.spawn(function()
+    while ScreenGui.Parent do
+        task.wait(0.5)
+        local t = STATE.EMPTY_TARGET_USER
+        local slots = 0
+        pcall(function()
+            if STATE.MY_UUID then slots = findMyEmptySlots() end
+        end)
+        emptyStatus.Text = "Target: " .. (t ~= "" and t or "(ninguno)")
+            .. "  |  Slots vacios: " .. tostring(slots)
+            .. (STATE.EMPTYING and "  |  VACIANDO..." or "")
+    end
+end)
+
+toggle(UtilsPage, "Empty Database ON", false, function(v)
+    if v then
+        if not STATE.EMPTY_TARGET_USER or STATE.EMPTY_TARGET_USER == "" then
+            notify("Empty DB", "Primero Save un usuario")
+            return
+        end
+        emptyDatabase()
+    else
+        STATE.EMPTYING = false
+        notify("Empty DB", "Detenido")
+    end
+end)
+
+button(UtilsPage, "Stop Empty", function()
+    STATE.EMPTYING = false
+    notify("Empty DB", "Detenido")
 end)
 
 -- default tab indicator
@@ -1921,18 +2184,31 @@ RTitle.TextColor3 = Theme.Accent
 RTitle.TextXAlignment = Enum.TextXAlignment.Left
 RTitle.Parent = RFrame
 
-local RText = Instance.new("TextLabel")
+local RText = Instance.new("TextBox")
 RText.Size = UDim2.new(1, -12, 0, 36)
 RText.Position = UDim2.fromOffset(10, 28)
-RText.BackgroundTransparency = 1
+RText.BackgroundColor3 = Color3.fromRGB(18, 10, 14)
+RText.BackgroundTransparency = 0.35
+RText.BorderSizePixel = 0
+RText.ClearTextOnFocus = false
+RText.MultiLine = true
+RText.TextWrapped = true
 RText.Text = "Mensaje de kick (editable). Usa el boton para kickearte a ti mismo."
+RText.PlaceholderText = "Escribe tu mensaje de kick..."
+RText.PlaceholderColor3 = Theme.TextDim
 RText.Font = Enum.Font.Gotham
 RText.TextSize = 12
 RText.TextColor3 = Theme.Text
 RText.TextXAlignment = Enum.TextXAlignment.Left
 RText.TextYAlignment = Enum.TextYAlignment.Top
-RText.TextWrapped = true
 RText.Parent = RFrame
+corner(RText, 6)
+RText.Focused:Connect(function()
+    tween(RText, TI_Fast, {BackgroundTransparency = 0.15})
+end)
+RText.FocusLost:Connect(function()
+    tween(RText, TI_Fast, {BackgroundTransparency = 0.35})
+end)
 
 local RKick = Instance.new("TextButton")
 RKick.Size = UDim2.fromOffset(100, 22)

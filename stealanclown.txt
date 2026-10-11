@@ -1,0 +1,1980 @@
+--[[
+  Brainrot Ultimate - GUI propia (sin WindUI)
+  Minimizar / Cerrar + mismos toggles, sliders y botones
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+local CONFIG = {
+    ScanInterval = 2,
+    SnipeInterval = 0.5,
+    SnipeCooldown = 3,
+    AutoGrabDelay = 0.15,
+    StealTimeout = 15,
+    BaseDetectRadius = 80,
+    AntiTrapEscapeTime = 1.5,
+}
+
+local RARITY_COLORS = {
+    ["Divine"] = Color3.fromRGB(255, 50, 50),
+    ["Secret"] = Color3.fromRGB(180, 80, 255),
+    ["Alpha"] = Color3.fromRGB(255, 200, 50),
+    ["Brainrot God"] = Color3.fromRGB(80, 150, 255),
+    ["18s"] = Color3.fromRGB(255, 130, 200),
+    ["Mythic"] = Color3.fromRGB(255, 100, 200),
+    ["Legendary"] = Color3.fromRGB(255, 165, 0),
+    ["Epic"] = Color3.fromRGB(180, 100, 255),
+    ["Rare"] = Color3.fromRGB(80, 200, 255),
+    ["Common"] = Color3.fromRGB(180, 180, 180),
+}
+
+local SNIPE_RARITIES = {"Divine", "Secret", "Alpha", "Brainrot God", "18s", "Mythic", "Legendary", "Epic", "Rare"}
+
+local STATE = {
+    MY_UUID = nil,
+    TOP_CLOWNS = {},
+    BEST_CLOWN = nil,
+    AUTO_SCAN_ON = true,
+    AUTO_GRAB_ON = true,
+    AUTO_FARM_ON = false,
+    INSTANT_STEAL_ON = false,
+    KICK_ON_STEAL = false,
+    SPEED_ON = false,
+    SPEED_CONN = nil,
+    INF_JUMP_ON = false,
+    INF_JUMP_CONN = nil,
+    NOCLIP_ON = false,
+    NOCLIP_CONN = nil,
+    GOD_ON = false,
+    GOD_CONNS = {},
+    ESP_ON = true,
+    ESP_BY_RARITY_ON = false,
+    FPS_ON = false,
+    ANTI_RAGDOLL_ON = false,
+    ANTIBAT_ON = false,
+    AUTODEFENSE_ON = false,
+    AUTODEFENSE_CONN = nil,
+    ANTITRAP_ON = false,
+    ANTITRAP_CONN = nil,
+    SNIPE_ON = false,
+    SNIPE_SELECTED = {["Divine"] = true, ["Secret"] = true},
+    SNIPE_LAST = 0,
+    SNIPE_RUNNING = false,
+    STEAL_ROUTINE_RUNNING = false,
+    STEAL_CONN = nil,
+    REVENGE_ON = false,
+    REVENGE_TARGET = nil,
+    REVENGE_TIME = 0,
+    REVENGE_DURATION = 30,
+    RECOVERY_SNIPE_ON = false,
+    RECOVERY_TARGETS = {},
+    AUTOBATE_ON = false,
+    FLY_ON = false,
+    FLY_SPEED = 60,
+    FLY_GOD = false,
+    FLY_CONNS = {},
+    FLY_BV = nil,
+    FLY_BG = nil,
+}
+
+local antiRagdollConns = {}
+local antiRagdollRunning = false
+
+----------------------------------------------------------------
+-- LOGICA DEL JUEGO (igual que antes)
+----------------------------------------------------------------
+
+local function parseMoney(s)
+    if not s or s == "" then return 0 end
+    s = s:gsub("[%$,%s]", "")
+    local n, suf = s:match("^([%d%.]+)([KMBTQ]?)")
+    if not n then return 0 end
+    n = tonumber(n) or 0
+    local m = ({K = 1e3, M = 1e6, B = 1e9, T = 1e12, Q = 1e15})[suf] or 1
+    return n * m
+end
+
+local function formatGen(n)
+    if not n or n == 0 then return "0/s" end
+    if n >= 1e15 then return string.format("%.2fQ/s", n / 1e15) end
+    if n >= 1e12 then return string.format("%.2fT/s", n / 1e12) end
+    if n >= 1e9 then return string.format("%.2fB/s", n / 1e9) end
+    if n >= 1e6 then return string.format("%.2fM/s", n / 1e6) end
+    if n >= 1e3 then return string.format("%.2fK/s", n / 1e3) end
+    return tostring(math.floor(n)) .. "/s"
+end
+
+local function readOverhead(o)
+    if not o then return nil end
+    local function t(ns)
+        for _, n in ipairs(ns) do
+            local l = o:FindFirstChild(n)
+            if l and l.Text and l.Text ~= "" then return l.Text end
+        end
+        return ""
+    end
+    return {
+        displayName = t({"DisplayName", "Name", "Title", "Label"}),
+        mutation = t({"Mutation", "Mut", "Mutacion"}),
+        rarity = t({"Rarity", "Rare", "Rareza"}),
+        generation = t({"Generation", "Gen", "Income", "Money", "CPS", "PerSecond"}),
+        price = t({"Price", "Value", "Precio", "Cost"}),
+        stolen = t({"Stolen", "Stole", "Robado", "Status"}),
+    }
+end
+
+local function getPodiumPrompt(p)
+    local b = p:FindFirstChild("Base")
+    if not b then return nil end
+    local s = b:FindFirstChild("Spawn")
+    if not s then return nil end
+    local a = s:FindFirstChild("PromptAttachment")
+    if not a then return nil end
+    return a:FindFirstChild("ProximityPrompt")
+end
+
+local function isStealablePrompt(p)
+    if not p or not p.Parent then return false end
+    if not p.Enabled then return false end
+    local st = p:GetAttribute("State")
+    if st == "Steal" or st == "Grab" then return true end
+    local at = p.ActionText
+    if at == "Steal" or at == "Grab" then return true end
+    if at:lower():find("steal") then return true end
+    if at:lower():find("rob") then return true end
+    return false
+end
+
+local function findMyPlot()
+    local ps = Workspace:FindFirstChild("Plots")
+    if not ps then return nil end
+    for _, p in ipairs(ps:GetChildren()) do
+        local s = p:FindFirstChild("PlotSign")
+        if s then
+            local y = s:FindFirstChild("YourBase")
+            if y and y:IsA("BillboardGui") and y.Enabled then return p end
+        end
+    end
+    return nil
+end
+
+local function updateMyBase()
+    local p = findMyPlot()
+    if p then STATE.MY_UUID = p.Name end
+end
+
+local function doTPBase()
+    if not STATE.MY_UUID then updateMyBase() end
+    if not STATE.MY_UUID then return false end
+    local ps = Workspace:FindFirstChild("Plots")
+    local p = ps and ps:FindFirstChild(STATE.MY_UUID)
+    if not p then return false end
+    local s = p:FindFirstChild("Spawn") or p.PrimaryPart
+    if not s or not s:IsA("BasePart") then
+        s = p:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not s then return false end
+    local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if h then
+        h.CFrame = s.CFrame + Vector3.new(0, 5, 0)
+        h.AssemblyLinearVelocity = Vector3.zero
+        return true
+    end
+    return false
+end
+
+local function scanAllClowns()
+    local ps = Workspace:FindFirstChild("Plots")
+    if not ps then return end
+    local all = {}
+    local best = nil
+    local bv = -1
+    for _, p in ipairs(ps:GetChildren()) do
+        if p.Name ~= STATE.MY_UUID then
+            local pod = p:FindFirstChild("AnimalPodiums")
+            if pod then
+                for _, po in ipairs(pod:GetChildren()) do
+                    local b = po:FindFirstChild("Base")
+                    if b then
+                        local oh = b:FindFirstChild("AnimalOverhead", true)
+                        if not oh then
+                            for _, d in ipairs(b:GetDescendants()) do
+                                if d:IsA("BillboardGui") then oh = d break end
+                            end
+                        end
+                        local data = readOverhead(oh)
+                        if data and data.displayName ~= "" and data.displayName ~= "Empty" then
+                            local st = data.stolen:upper()
+                            if st ~= "IN FUSE" and st ~= "FUSE" and st ~= "FUSING" then
+                                local pr = getPodiumPrompt(po)
+                                if not pr then
+                                    for _, d in ipairs(b:GetDescendants()) do
+                                        if d:IsA("ProximityPrompt") then pr = d break end
+                                    end
+                                end
+                                if pr and isStealablePrompt(pr) then
+                                    local g = parseMoney(data.generation)
+                                    if g == 0 and data.price ~= "" then g = parseMoney(data.price) end
+                                    local i = {
+                                        plot = p.Name,
+                                        slot = po.Name,
+                                        nombre = data.displayName,
+                                        mutacion = data.mutation,
+                                        gen = g,
+                                        total = g,
+                                        price = parseMoney(data.price),
+                                        rarity = data.rarity,
+                                        prompt = pr,
+                                        base = b,
+                                    }
+                                    table.insert(all, i)
+                                    if g > bv then bv = g best = i end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(all, function(a, b) return a.total > b.total end)
+    STATE.TOP_CLOWNS = all
+    if best then STATE.BEST_CLOWN = best end
+end
+
+local function autoGrabAt(c)
+    if not c then return false end
+    local p = c.prompt
+    if not p then
+        for _, d in ipairs(c.base:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then p = d break end
+        end
+    end
+    if not p or not p.Enabled then return false end
+    pcall(function()
+        p.HoldDuration = 0
+        p.MaxActivationDistance = math.huge
+        p.RequiresLineOfSight = false
+        if fireproximityprompt then fireproximityprompt(p) end
+    end)
+    return true
+end
+
+local function tpToClown(c, dg)
+    if not c then return false, "Sin datos" end
+    local ps = Workspace:FindFirstChild("Plots")
+    local p = ps and ps:FindFirstChild(c.plot)
+    local pod = p and p:FindFirstChild("AnimalPodiums")
+    local po = pod and pod:FindFirstChild(tostring(c.slot))
+    local b = po and po:FindFirstChild("Base")
+    if not b then return false, "Sin base" end
+    local pp = b.PrimaryPart or b:FindFirstChildWhichIsA("BasePart", true)
+    if not pp then return false, "Sin part" end
+    local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if h then
+        h.CFrame = pp.CFrame + Vector3.new(0, 3, 0)
+        h.AssemblyLinearVelocity = Vector3.zero
+        if dg and STATE.AUTO_GRAB_ON then
+            task.wait(CONFIG.AutoGrabDelay)
+            autoGrabAt(c)
+        end
+        return true, c.nombre
+    end
+    return false, "Sin HRP"
+end
+
+local function setSpeed(on)
+    STATE.SPEED_ON = on
+    if STATE.SPEED_CONN then STATE.SPEED_CONN:Disconnect() STATE.SPEED_CONN = nil end
+    if on then
+        STATE.SPEED_CONN = RunService.Heartbeat:Connect(function()
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if h then h.WalkSpeed = 50 end
+        end)
+    else
+        local c = LocalPlayer.Character
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        if h then h.WalkSpeed = 16 end
+    end
+end
+
+local function setNoclip(on)
+    STATE.NOCLIP_ON = on
+    if STATE.NOCLIP_CONN then STATE.NOCLIP_CONN:Disconnect() STATE.NOCLIP_CONN = nil end
+    if on then
+        STATE.NOCLIP_CONN = RunService.Stepped:Connect(function()
+            local c = LocalPlayer.Character
+            if not c then return end
+            for _, p in ipairs(c:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
+        end)
+    end
+end
+
+local function setInfJump(on)
+    STATE.INF_JUMP_ON = on
+    if STATE.INF_JUMP_CONN then STATE.INF_JUMP_CONN:Disconnect() STATE.INF_JUMP_CONN = nil end
+    if on then
+        STATE.INF_JUMP_CONN = UserInputService.JumpRequest:Connect(function()
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end)
+    end
+end
+
+local function setGod(on)
+    STATE.GOD_ON = on
+    for _, c in ipairs(STATE.GOD_CONNS) do c:Disconnect() end
+    STATE.GOD_CONNS = {}
+    local ch = LocalPlayer.Character
+    local h = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not h then return end
+    if on then
+        h.MaxHealth = math.huge
+        h.Health = math.huge
+        table.insert(STATE.GOD_CONNS, h.HealthChanged:Connect(function(hp)
+            if STATE.GOD_ON and hp < h.MaxHealth then h.Health = h.MaxHealth end
+        end))
+    else
+        h.MaxHealth = 100
+        h.Health = 100
+    end
+end
+
+local function setFPS(on)
+    STATE.FPS_ON = on
+    local L = game:GetService("Lighting")
+    if on then
+        L.GlobalShadows = false
+        L.FogEnd = 1000000
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        for _, d in ipairs(L:GetChildren()) do
+            if d:IsA("PostEffect") then d.Enabled = false end
+        end
+    else
+        L.GlobalShadows = true
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic end)
+    end
+end
+
+local ESP_HL = {}
+local function clearESP()
+    for _, hl in pairs(ESP_HL) do
+        if hl and hl.Parent then hl:Destroy() end
+    end
+    ESP_HL = {}
+end
+
+local function setESP(on)
+    STATE.ESP_ON = on
+    clearESP()
+    if not on or not STATE.BEST_CLOWN then return end
+    local c = STATE.BEST_CLOWN
+    local ps = Workspace:FindFirstChild("Plots")
+    local p = ps and ps:FindFirstChild(c.plot)
+    local pod = p and p:FindFirstChild("AnimalPodiums")
+    local po = pod and pod:FindFirstChild(tostring(c.slot))
+    local b = po and po:FindFirstChild("Base")
+    if not b then return end
+    local hl = Instance.new("Highlight")
+    hl.FillColor = Color3.fromRGB(255, 30, 30)
+    hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+    hl.FillTransparency = 0.3
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Adornee = b
+    hl.Parent = b
+    table.insert(ESP_HL, hl)
+end
+
+local function setESPByRarity(on)
+    STATE.ESP_BY_RARITY_ON = on
+    clearESP()
+    if not on then return end
+    for _, c in ipairs(STATE.TOP_CLOWNS) do
+        local ps = Workspace:FindFirstChild("Plots")
+        local p = ps and ps:FindFirstChild(c.plot)
+        local pod = p and p:FindFirstChild("AnimalPodiums")
+        local po = pod and pod:FindFirstChild(tostring(c.slot))
+        local b = po and po:FindFirstChild("Base")
+        if b then
+            local col = RARITY_COLORS[c.rarity] or Color3.fromRGB(180, 180, 180)
+            local hl = Instance.new("Highlight")
+            hl.FillColor = col
+            hl.OutlineColor = col
+            hl.FillTransparency = 0.4
+            hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Adornee = b
+            hl.Parent = b
+            table.insert(ESP_HL, hl)
+        end
+    end
+end
+
+local function cleanRagdoll(c)
+    if not c then return end
+    c:SetAttribute("Ragdolled", nil)
+    c:SetAttribute("__RealRagdoll", nil)
+    c:SetAttribute("__RD_RequiresNeck", nil)
+    c:SetAttribute("__RD_AutoRotate", nil)
+    local rt = c:FindFirstChild("__RagdollRuntime")
+    if rt then rt:Destroy() end
+    for _, d in ipairs(c:GetDescendants()) do
+        if d:IsA("BasePart") then
+            local oc = d:GetAttribute("__RD_OldCollide")
+            if oc ~= nil then d.CanCollide = oc d:SetAttribute("__RD_OldCollide", nil) end
+            local om = d:GetAttribute("__RD_OldMassless")
+            if om ~= nil then d.Massless = om d:SetAttribute("__RD_OldMassless", nil) end
+        elseif d:IsA("Motor6D") then
+            local oe = d:GetAttribute("__RD_OldEnabled")
+            if oe ~= nil then d.Enabled = oe d:SetAttribute("__RD_OldEnabled", nil) end
+        end
+    end
+end
+
+local function startAntiRagdoll()
+    if antiRagdollRunning then return end
+    antiRagdollRunning = true
+    local function hook(ch)
+        if not ch then return end
+        cleanRagdoll(ch)
+        local cn
+        cn = RunService.Heartbeat:Connect(function()
+            if not STATE.ANTI_RAGDOLL_ON then return end
+            if ch.Parent == nil then if cn then cn:Disconnect() end return end
+            if ch:GetAttribute("Ragdolled") then cleanRagdoll(ch) end
+        end)
+        table.insert(antiRagdollConns, cn)
+    end
+    if LocalPlayer.Character then hook(LocalPlayer.Character) end
+    table.insert(antiRagdollConns, LocalPlayer.CharacterAdded:Connect(function(c)
+        task.wait(0.2)
+        hook(c)
+    end))
+end
+
+local function stopAntiRagdoll()
+    STATE.ANTI_RAGDOLL_ON = false
+    for _, c in ipairs(antiRagdollConns) do pcall(function() c:Disconnect() end) end
+    antiRagdollConns = {}
+    antiRagdollRunning = false
+end
+
+local function setAntiRagdoll(on)
+    STATE.ANTI_RAGDOLL_ON = on
+    if on then startAntiRagdoll() else stopAntiRagdoll() end
+end
+
+local ANTI_ATTRS = {"BatImmune", "AntiBat", "NoStun"}
+
+local function activarAntibat()
+    for _, a in ipairs(ANTI_ATTRS) do
+        pcall(function() LocalPlayer:SetAttribute(a, true) end)
+    end
+end
+
+local function startAntibat()
+    STATE.ANTIBAT_ON = true
+    activarAntibat()
+    for _, a in ipairs(ANTI_ATTRS) do
+        pcall(function()
+            LocalPlayer:GetAttributeChangedSignal(a):Connect(function()
+                if STATE.ANTIBAT_ON and LocalPlayer:GetAttribute(a) ~= true then
+                    LocalPlayer:SetAttribute(a, true)
+                end
+            end)
+        end)
+    end
+end
+
+local function stopAntibat()
+    STATE.ANTIBAT_ON = false
+    for _, a in ipairs(ANTI_ATTRS) do
+        pcall(function() LocalPlayer:SetAttribute(a, nil) end)
+    end
+end
+
+local function getPayasoName()
+    local i = LocalPlayer:GetAttribute("StealingIndex")
+    if i == nil then return "?" end
+    local ps = Workspace:FindFirstChild("Plots")
+    if not ps then return tostring(i) end
+    for _, p in ipairs(ps:GetChildren()) do
+        local pod = p:FindFirstChild("AnimalPodiums")
+        if pod then
+            local po = pod:FindFirstChild(tostring(i))
+            if po then
+                local b = po:FindFirstChild("Base")
+                if b then
+                    local oh = b:FindFirstChild("AnimalOverhead", true)
+                    if not oh then
+                        for _, d in ipairs(b:GetDescendants()) do
+                            if d:IsA("BillboardGui") then oh = d break end
+                        end
+                    end
+                    local data = readOverhead(oh)
+                    if data and data.displayName ~= "" and data.displayName ~= "Empty" then
+                        return data.displayName
+                    end
+                end
+            end
+        end
+    end
+    return tostring(i)
+end
+
+local function esperarStealingFalse(t)
+    t = t or CONFIG.StealTimeout
+    local t0 = os.clock()
+    while LocalPlayer:GetAttribute("Stealing") == true do
+        if os.clock() - t0 > t then break end
+        task.wait(0.05)
+    end
+end
+
+local function onStealStart()
+    if STATE.STEAL_ROUTINE_RUNNING then return end
+    STATE.STEAL_ROUTINE_RUNNING = true
+    local ch = LocalPlayer.Character
+    local h = ch and ch:FindFirstChild("HumanoidRootPart")
+    local ocf = h and h.CFrame or nil
+    task.wait(0.1)
+    local py = getPayasoName()
+    print("[AutoTP] Payaso robado:", py)
+    if STATE.REVENGE_ON and h then
+        local cl, di = nil, 25
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                local th = p.Character:FindFirstChild("HumanoidRootPart")
+                if th then
+                    local d = (th.Position - h.Position).Magnitude
+                    if d < di then di = d cl = p end
+                end
+            end
+        end
+        if cl then
+            STATE.REVENGE_TARGET = cl
+            STATE.REVENGE_TIME = os.clock()
+            if _G.BrainrotNotify then _G.BrainrotNotify("Revenge", "Te esta robando: " .. cl.Name) end
+        end
+    end
+    pcall(doTPBase)
+    task.spawn(function()
+        esperarStealingFalse(CONFIG.StealTimeout)
+        pcall(function()
+            local c = LocalPlayer.Character
+            local hh = c and c:FindFirstChild("HumanoidRootPart")
+            if hh and ocf then
+                hh.CFrame = ocf
+                hh.AssemblyLinearVelocity = Vector3.zero
+            end
+        end)
+        if STATE.KICK_ON_STEAL then
+            task.wait(0.2)
+            local r = "Payaso Robado: " .. tostring(py) .. "."
+            if _G.BrainrotShowReason then _G.BrainrotShowReason(r) end
+            task.wait(1)
+            LocalPlayer:Kick(r)
+        end
+        STATE.STEAL_ROUTINE_RUNNING = false
+    end)
+end
+
+local function setInstantSteal(on)
+    STATE.INSTANT_STEAL_ON = on
+    pcall(function() LocalPlayer:SetAttribute("InstantSteal", on) end)
+    if STATE.STEAL_CONN then STATE.STEAL_CONN:Disconnect() STATE.STEAL_CONN = nil end
+    if on then
+        STATE.STEAL_CONN = LocalPlayer:GetAttributeChangedSignal("Stealing"):Connect(function()
+            if LocalPlayer:GetAttribute("Stealing") == true then onStealStart() end
+        end)
+    end
+end
+
+local function findSnipeTarget()
+    local ps = Workspace:FindFirstChild("Plots")
+    if not ps then return nil end
+    for _, p in ipairs(ps:GetChildren()) do
+        if p.Name ~= STATE.MY_UUID then
+            local pod = p:FindFirstChild("AnimalPodiums")
+            if pod then
+                for _, po in ipairs(pod:GetChildren()) do
+                    local b = po:FindFirstChild("Base")
+                    if b then
+                        local oh = b:FindFirstChild("AnimalOverhead", true)
+                        if not oh then
+                            for _, d in ipairs(b:GetDescendants()) do
+                                if d:IsA("BillboardGui") then oh = d break end
+                            end
+                        end
+                        local data = readOverhead(oh)
+                        if data and data.displayName ~= "" and data.displayName ~= "Empty" then
+                            local r = tostring(data.rarity)
+                            if STATE.SNIPE_SELECTED[r] then
+                                local st = data.stolen:upper()
+                                if st ~= "IN FUSE" and st ~= "FUSE" and st ~= "FUSING" then
+                                    local pr = getPodiumPrompt(po)
+                                    if not pr then
+                                        for _, d in ipairs(b:GetDescendants()) do
+                                            if d:IsA("ProximityPrompt") then pr = d break end
+                                        end
+                                    end
+                                    if pr and isStealablePrompt(pr) then
+                                        return {
+                                            plot = p.Name,
+                                            slot = po.Name,
+                                            nombre = data.displayName,
+                                            rarity = r,
+                                            gen = parseMoney(data.generation),
+                                            prompt = pr,
+                                            base = b,
+                                        }
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function runSnipe()
+    if STATE.SNIPE_RUNNING then return end
+    if os.clock() - STATE.SNIPE_LAST < CONFIG.SnipeCooldown then return end
+    local t = findSnipeTarget()
+    if not t then return end
+    STATE.SNIPE_RUNNING = true
+    STATE.SNIPE_LAST = os.clock()
+    print("[Snipe] Encontrado:", t.nombre, "|", t.rarity)
+    pcall(function() tpToClown(t, true) end)
+    if not STATE.INSTANT_STEAL_ON then
+        pcall(function() LocalPlayer:SetAttribute("InstantSteal", true) end)
+    end
+    task.delay(2, function() STATE.SNIPE_RUNNING = false end)
+end
+
+local function esTrabado()
+    local c = LocalPlayer.Character
+    if not c then return false end
+    local h = c:FindFirstChild("HumanoidRootPart")
+    local hu = c:FindFirstChildOfClass("Humanoid")
+    if not h or not hu then return false end
+    if h.Anchored then return true end
+    if hu.MoveDirection.Magnitude > 0.1 and h.AssemblyLinearVelocity.Magnitude < 0.5 then return true end
+    for _, w in ipairs(h:GetChildren()) do
+        if w:IsA("WeldConstraint") or w:IsA("Weld") or w:IsA("Motor6D") then
+            local o = (w.Part0 == h) and w.Part1 or w.Part0
+            if o and not o:IsDescendantOf(c) then return true end
+        end
+    end
+    return false
+end
+
+local function destrabar()
+    local c = LocalPlayer.Character
+    if not c then return end
+    local h = c:FindFirstChild("HumanoidRootPart")
+    local hu = c:FindFirstChildOfClass("Humanoid")
+    if not h then return end
+    pcall(function() h.Anchored = false end)
+    if hu then
+        pcall(function()
+            if hu.WalkSpeed < 16 then hu.WalkSpeed = 16 end
+            if hu.JumpPower < 50 then hu.JumpPower = 50 end
+        end)
+    end
+    for _, w in ipairs(h:GetChildren()) do
+        if w:IsA("WeldConstraint") or w:IsA("Weld") or w:IsA("Motor6D") then
+            local o = (w.Part0 == h) and w.Part1 or w.Part0
+            if o and not o:IsDescendantOf(c) then pcall(function() w:Destroy() end) end
+        end
+    end
+    for _, p in ipairs(c:GetDescendants()) do
+        if p:IsA("BasePart") and p.Anchored then pcall(function() p.Anchored = false end) end
+    end
+end
+
+local function startAntiTrap()
+    STATE.ANTITRAP_ON = true
+    if STATE.ANTITRAP_CONN then STATE.ANTITRAP_CONN:Disconnect() end
+    STATE.ANTITRAP_CONN = RunService.Heartbeat:Connect(function()
+        if not STATE.ANTITRAP_ON then return end
+        if esTrabado() then destrabar() end
+    end)
+    task.spawn(function()
+        local t0 = 0
+        while STATE.ANTITRAP_ON do
+            task.wait(0.2)
+            if esTrabado() then
+                if t0 == 0 then t0 = os.clock() end
+                if os.clock() - t0 > CONFIG.AntiTrapEscapeTime then
+                    pcall(doTPBase)
+                    t0 = 0
+                end
+            else
+                t0 = 0
+            end
+        end
+    end)
+end
+
+local function stopAntiTrap()
+    STATE.ANTITRAP_ON = false
+    if STATE.ANTITRAP_CONN then STATE.ANTITRAP_CONN:Disconnect() STATE.ANTITRAP_CONN = nil end
+end
+
+local function findThiefNearMyPlot()
+    if not STATE.MY_UUID then return nil end
+    local ps = Workspace:FindFirstChild("Plots")
+    local mp = ps and ps:FindFirstChild(STATE.MY_UUID)
+    if not mp then return nil end
+    local ms = mp:FindFirstChild("Spawn") or mp.PrimaryPart
+    if not ms then return nil end
+    local mpos = ms.Position
+    local cl, cd = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local h = p.Character:FindFirstChild("HumanoidRootPart")
+            local hu = p.Character:FindFirstChildOfClass("Humanoid")
+            if h and hu and hu.Health > 0 then
+                local d = (h.Position - mpos).Magnitude
+                if d < CONFIG.BaseDetectRadius and d < cd then cd = d cl = p end
+            end
+        end
+    end
+    return cl
+end
+
+local function equipBat()
+    local c = LocalPlayer.Character
+    if not c then return end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if not bp then return end
+    local function fb(cc)
+        for _, t in ipairs(cc:GetChildren()) do
+            if t:IsA("Tool") then
+                local n = t.Name:lower()
+                if n:find("bat") or n:find("bate") or n:find("stick") then return t end
+            end
+        end
+        return nil
+    end
+    local hu = c:FindFirstChildOfClass("Humanoid")
+    local eq = c:FindFirstChildWhichIsA("Tool")
+    if eq then
+        local n = eq.Name:lower()
+        if n:find("bat") or n:find("bate") or n:find("stick") then return eq end
+    end
+    local b = fb(bp) or fb(c)
+    if b and hu then hu:EquipTool(b) end
+end
+
+local function aimbotAt(tc)
+    local c = LocalPlayer.Character
+    local mh = c and c:FindFirstChild("HumanoidRootPart")
+    local th = tc and tc:FindFirstChild("HumanoidRootPart")
+    if not mh or not th then return end
+    local lk = Vector3.new(th.Position.X, mh.Position.Y, th.Position.Z)
+    mh.CFrame = CFrame.new(mh.Position, lk)
+end
+
+local function followThief(tp)
+    if not tp or not tp.Character then return end
+    local th = tp.Character:FindFirstChild("HumanoidRootPart")
+    local c = LocalPlayer.Character
+    local mh = c and c:FindFirstChild("HumanoidRootPart")
+    if not th or not mh then return end
+    mh.CFrame = th.CFrame * CFrame.new(0, 0, 3)
+    mh.AssemblyLinearVelocity = Vector3.zero
+end
+
+local function startAutoDefense()
+    STATE.AUTODEFENSE_ON = true
+    if STATE.AUTODEFENSE_CONN then STATE.AUTODEFENSE_CONN:Disconnect() end
+    STATE.AUTODEFENSE_CONN = RunService.Heartbeat:Connect(function()
+        if not STATE.AUTODEFENSE_ON then return end
+        local th = findThiefNearMyPlot()
+        if th then
+            pcall(function()
+                equipBat()
+                followThief(th)
+                aimbotAt(th.Character)
+            end)
+        end
+    end)
+end
+
+local function stopAutoDefense()
+    STATE.AUTODEFENSE_ON = false
+    if STATE.AUTODEFENSE_CONN then STATE.AUTODEFENSE_CONN:Disconnect() STATE.AUTODEFENSE_CONN = nil end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        if STATE.REVENGE_ON and STATE.REVENGE_TARGET then
+            local t = STATE.REVENGE_TARGET
+            local ex = (os.clock() - STATE.REVENGE_TIME) > STATE.REVENGE_DURATION
+            if ex or not t.Parent or not t.Character then
+                STATE.REVENGE_TARGET = nil
+            else
+                pcall(function()
+                    equipBat()
+                    followThief(t)
+                    aimbotAt(t.Character)
+                end)
+            end
+        end
+    end
+end)
+
+local function registrarRecovery(n)
+    if not n or n == "?" then return end
+    STATE.RECOVERY_TARGETS[n] = {hora = os.clock()}
+    print("[Recovery] Marcado:", n)
+    if _G.BrainrotNotify then _G.BrainrotNotify("Recovery", "Persiguiendo: " .. n) end
+end
+
+LocalPlayer:GetAttributeChangedSignal("Stealing"):Connect(function()
+    if LocalPlayer:GetAttribute("Stealing") == true then
+        local i = LocalPlayer:GetAttribute("StealingIndex")
+        if not i then return end
+        local ps = Workspace:FindFirstChild("Plots")
+        local mp = ps and ps:FindFirstChild(STATE.MY_UUID)
+        if not mp then return end
+        local pod = mp:FindFirstChild("AnimalPodiums")
+        local po = pod and pod:FindFirstChild(tostring(i))
+        local b = po and po:FindFirstChild("Base")
+        local oh = b and b:FindFirstChild("AnimalOverhead", true)
+        local data = oh and readOverhead(oh)
+        if data and data.displayName ~= "" then
+            registrarRecovery(data.displayName)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if STATE.RECOVERY_SNIPE_ON then
+            local a = os.clock()
+            for n, info in pairs(STATE.RECOVERY_TARGETS) do
+                if a - info.hora > 60 then
+                    STATE.RECOVERY_TARGETS[n] = nil
+                else
+                    local ps = Workspace:FindFirstChild("Plots")
+                    if ps then
+                        local enc = false
+                        for _, p in ipairs(ps:GetChildren()) do
+                            if not enc then
+                                local pod = p:FindFirstChild("AnimalPodiums")
+                                if pod then
+                                    for _, po in ipairs(pod:GetChildren()) do
+                                        local b = po:FindFirstChild("Base")
+                                        if b then
+                                            local oh = b:FindFirstChild("AnimalOverhead", true)
+                                            local data = oh and readOverhead(oh)
+                                            if data and data.displayName == n then
+                                                local pr = getPodiumPrompt(po)
+                                                if pr and isStealablePrompt(pr) then
+                                                    local obj = {plot = p.Name, slot = po.Name, nombre = n, prompt = pr, base = b}
+                                                    print("[Recovery] Recuperando:", n)
+                                                    pcall(function() tpToClown(obj, true) end)
+                                                    STATE.RECOVERY_TARGETS[n] = nil
+                                                    if _G.BrainrotNotify then _G.BrainrotNotify("Recovery", "Recuperado: " .. n) end
+                                                    enc = true
+                                                    break
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local function buscarBate()
+    local c = LocalPlayer.Character
+    if not c then return nil end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    for _, cn in ipairs({bp, c}) do
+        if cn then
+            for _, t in ipairs(cn:GetChildren()) do
+                if t:IsA("Tool") then
+                    local n = t.Name:lower()
+                    if n:find("bat") or n:find("bate") or n:find("stick") then return t end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function equiparBate()
+    local c = LocalPlayer.Character
+    if not c then return end
+    local hu = c:FindFirstChildOfClass("Humanoid")
+    if not hu then return end
+    local eq = c:FindFirstChildWhichIsA("Tool")
+    if eq then
+        local n = eq.Name:lower()
+        if n:find("bat") or n:find("bate") or n:find("stick") then return end
+    end
+    local b = buscarBate()
+    if b then pcall(function() hu:EquipTool(b) end) end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if STATE.AUTOBATE_ON then pcall(equiparBate) end
+    end
+end)
+
+local function stopFly()
+    STATE.FLY_ON = false
+    for _, c in ipairs(STATE.FLY_CONNS) do pcall(function() c:Disconnect() end) end
+    STATE.FLY_CONNS = {}
+    if STATE.FLY_BV then STATE.FLY_BV:Destroy() STATE.FLY_BV = nil end
+    if STATE.FLY_BG then STATE.FLY_BG:Destroy() STATE.FLY_BG = nil end
+    local c = LocalPlayer.Character
+    local h = c and c:FindFirstChild("HumanoidRootPart")
+    if h then h.AssemblyLinearVelocity = Vector3.zero end
+end
+
+local function startFly()
+    stopFly()
+    STATE.FLY_ON = true
+    local c = LocalPlayer.Character
+    local h = c and c:FindFirstChild("HumanoidRootPart")
+    if not h then return end
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Velocity = Vector3.zero
+    bv.Parent = h
+    STATE.FLY_BV = bv
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P = 1000
+    bg.D = 50
+    bg.CFrame = h.CFrame
+    bg.Parent = h
+    STATE.FLY_BG = bg
+    table.insert(STATE.FLY_CONNS, RunService.RenderStepped:Connect(function()
+        if not STATE.FLY_ON then return end
+        local cc = LocalPlayer.Character
+        local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+        if not hh then return end
+        local cam = Workspace.CurrentCamera
+        local dir = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0, 1, 0) end
+        if dir.Magnitude > 0 then bv.Velocity = dir.Unit * STATE.FLY_SPEED else bv.Velocity = Vector3.zero end
+        bg.CFrame = cam.CFrame
+        if STATE.FLY_GOD then
+            local hu = cc:FindFirstChildOfClass("Humanoid")
+            if hu then hu.MaxHealth = math.huge hu.Health = math.huge end
+        end
+    end))
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if STATE.FLY_ON then startFly() end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(CONFIG.ScanInterval)
+        if STATE.AUTO_SCAN_ON then
+            pcall(updateMyBase)
+            pcall(scanAllClowns)
+            if STATE.ESP_ON then pcall(setESP, true) end
+            if STATE.ESP_BY_RARITY_ON then pcall(setESPByRarity, true) end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        if STATE.AUTO_FARM_ON and STATE.BEST_CLOWN then
+            pcall(function() tpToClown(STATE.BEST_CLOWN, true) end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(CONFIG.SnipeInterval)
+        if STATE.SNIPE_ON then pcall(runSnipe) end
+    end
+end)
+
+----------------------------------------------------------------
+-- GUI PROPIA  (animada / minimize total / open pequeño)
+----------------------------------------------------------------
+
+local Theme = {
+    Bg = Color3.fromRGB(12, 12, 18),
+    Panel = Color3.fromRGB(18, 18, 26),
+    Sidebar = Color3.fromRGB(14, 14, 22),
+    Accent = Color3.fromRGB(255, 55, 85),
+    Accent2 = Color3.fromRGB(255, 140, 70),
+    AccentGlow = Color3.fromRGB(255, 80, 110),
+    Text = Color3.fromRGB(245, 245, 250),
+    TextDim = Color3.fromRGB(130, 130, 150),
+    ToggleOff = Color3.fromRGB(40, 40, 55),
+    ToggleOn = Color3.fromRGB(255, 55, 85),
+    Stroke = Color3.fromRGB(45, 45, 60),
+    Success = Color3.fromRGB(80, 230, 130),
+    Hover = Color3.fromRGB(28, 28, 40),
+}
+
+local TI_Fast = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_Med  = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_Spring = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+local function tween(obj, info, props)
+    local t = TweenService:Create(obj, info or TI_Fast, props)
+    t:Play()
+    return t
+end
+
+local function corner(parent, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 8)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or Theme.Stroke
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.Parent = parent
+    return s
+end
+
+local function gradient(parent, c1, c2, rot)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(c1, c2)
+    g.Rotation = rot or 90
+    g.Parent = parent
+    return g
+end
+
+local function makeDraggable(frame, handle)
+    handle = handle or frame
+    local dragging, start, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            start = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local d = input.Position - start
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+local function hoverScale(btn, normal, hover)
+    normal = normal or 1
+    hover = hover or 1.04
+    btn.MouseEnter:Connect(function()
+        tween(btn, TI_Fast, {BackgroundTransparency = math.max(0, (btn.BackgroundTransparency or 0) - 0.05)})
+    end)
+    btn.MouseLeave:Connect(function()
+        tween(btn, TI_Fast, {BackgroundTransparency = btn:GetAttribute("BaseTrans") or 0})
+    end)
+end
+
+-- cleanup
+pcall(function()
+    local old = LocalPlayer.PlayerGui:FindFirstChild("BrainrotUltimateUI")
+    if old then old:Destroy() end
+end)
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BrainrotUltimateUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ===== OPEN BUTTON (pequeño, siempre accesible) =====
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Name = "OpenBtn"
+OpenBtn.Size = UDim2.fromOffset(38, 38)
+OpenBtn.Position = UDim2.new(0, 14, 0.5, -19)
+OpenBtn.BackgroundColor3 = Theme.Accent
+OpenBtn.BorderSizePixel = 0
+OpenBtn.Text = "B"
+OpenBtn.Font = Enum.Font.GothamBlack
+OpenBtn.TextSize = 16
+OpenBtn.TextColor3 = Theme.Text
+OpenBtn.Visible = false
+OpenBtn.ZIndex = 50
+OpenBtn.Parent = ScreenGui
+corner(OpenBtn, 10)
+stroke(OpenBtn, Theme.AccentGlow, 1.5, 0.3)
+gradient(OpenBtn, Theme.Accent, Theme.Accent2, 45)
+makeDraggable(OpenBtn, OpenBtn)
+
+OpenBtn.MouseEnter:Connect(function()
+    tween(OpenBtn, TI_Fast, {Size = UDim2.fromOffset(42, 42)})
+end)
+OpenBtn.MouseLeave:Connect(function()
+    tween(OpenBtn, TI_Fast, {Size = UDim2.fromOffset(38, 38)})
+end)
+
+-- ===== MAIN WINDOW =====
+local WIN_W, WIN_H = 480, 360
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.fromOffset(WIN_W, WIN_H)
+Main.Position = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
+Main.BackgroundColor3 = Theme.Bg
+Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
+Main.Parent = ScreenGui
+corner(Main, 14)
+local mainStroke = stroke(Main, Theme.Accent, 1.4, 0.35)
+
+-- Background image
+local BgImage = Instance.new("ImageLabel")
+BgImage.Name = "BgImage"
+BgImage.Size = UDim2.new(1, 0, 1, 0)
+BgImage.BackgroundTransparency = 1
+BgImage.Image = "rbxassetid://10744854425"
+BgImage.ImageTransparency = 0.55
+BgImage.ScaleType = Enum.ScaleType.Crop
+BgImage.ZIndex = 0
+BgImage.Parent = Main
+corner(BgImage, 14)
+
+-- Dark overlay so text stays readable
+local BgDim = Instance.new("Frame")
+BgDim.Size = UDim2.new(1, 0, 1, 0)
+BgDim.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+BgDim.BackgroundTransparency = 0.35
+BgDim.BorderSizePixel = 0
+BgDim.ZIndex = 0
+BgDim.Parent = Main
+corner(BgDim, 14)
+
+-- Accent top glow line
+local Glow = Instance.new("Frame")
+Glow.Size = UDim2.new(1, 0, 0, 3)
+Glow.BackgroundColor3 = Theme.Accent
+Glow.BorderSizePixel = 0
+Glow.ZIndex = 2
+Glow.Parent = Main
+gradient(Glow, Theme.Accent, Theme.Accent2, 0)
+
+-- Decorative side accent strip
+local SideDecor = Instance.new("Frame")
+SideDecor.Size = UDim2.new(0, 3, 1, -20)
+SideDecor.Position = UDim2.fromOffset(0, 10)
+SideDecor.BackgroundColor3 = Theme.Accent
+SideDecor.BorderSizePixel = 0
+SideDecor.ZIndex = 2
+SideDecor.Parent = Main
+gradient(SideDecor, Theme.Accent, Theme.Accent2, 90)
+corner(SideDecor, 2)
+
+-- Bottom subtle line
+local BotGlow = Instance.new("Frame")
+BotGlow.Size = UDim2.new(0.4, 0, 0, 2)
+BotGlow.Position = UDim2.new(0.3, 0, 1, -2)
+BotGlow.BackgroundColor3 = Theme.Accent2
+BotGlow.BorderSizePixel = 0
+BotGlow.BackgroundTransparency = 0.3
+BotGlow.ZIndex = 2
+BotGlow.Parent = Main
+corner(BotGlow, 1)
+
+-- Title bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 44)
+TitleBar.Position = UDim2.fromOffset(0, 3)
+TitleBar.BackgroundColor3 = Theme.Panel
+TitleBar.BackgroundTransparency = 0.15
+TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 3
+TitleBar.Parent = Main
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -120, 1, 0)
+Title.Position = UDim2.fromOffset(16, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "Brainrot Ultimate"
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.TextColor3 = Theme.Text
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TitleBar
+
+local SubTitle = Instance.new("TextLabel")
+SubTitle.Size = UDim2.new(1, -120, 0, 14)
+SubTitle.Position = UDim2.fromOffset(16, 26)
+SubTitle.BackgroundTransparency = 1
+SubTitle.Text = "Steal · Snipe · Defense"
+SubTitle.Font = Enum.Font.Gotham
+SubTitle.TextSize = 11
+SubTitle.TextColor3 = Theme.TextDim
+SubTitle.TextXAlignment = Enum.TextXAlignment.Left
+SubTitle.Parent = TitleBar
+
+local function chromeBtn(txt, xOff, bg)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(30, 30)
+    b.Position = UDim2.new(1, xOff, 0.5, -15)
+    b.BackgroundColor3 = bg
+    b.BorderSizePixel = 0
+    b.Text = txt
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.TextColor3 = Theme.Text
+    b.AutoButtonColor = false
+    b.Parent = TitleBar
+    corner(b, 8)
+    b:SetAttribute("BaseTrans", 0)
+    b.MouseEnter:Connect(function() tween(b, TI_Fast, {Size = UDim2.fromOffset(32, 32)}) end)
+    b.MouseLeave:Connect(function() tween(b, TI_Fast, {Size = UDim2.fromOffset(30, 30)}) end)
+    return b
+end
+
+local MinBtn = chromeBtn("–", -78, Color3.fromRGB(48, 48, 62))
+local CloseBtn = chromeBtn("×", -40, Theme.Accent)
+
+makeDraggable(Main, TitleBar)
+
+-- Body (todo lo que se minimiza)
+local Body = Instance.new("Frame")
+Body.Name = "Body"
+Body.Size = UDim2.new(1, -16, 1, -56)
+Body.Position = UDim2.fromOffset(8, 50)
+Body.BackgroundTransparency = 1
+Body.ClipsDescendants = true
+Body.ZIndex = 3
+Body.Parent = Main
+
+-- Sidebar
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.new(0, 128, 1, 0)
+Sidebar.BackgroundColor3 = Theme.Sidebar
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Body
+corner(Sidebar, 12)
+
+local SideList = Instance.new("UIListLayout")
+SideList.Padding = UDim.new(0, 5)
+SideList.SortOrder = Enum.SortOrder.LayoutOrder
+SideList.Parent = Sidebar
+
+local SidePad = Instance.new("UIPadding")
+SidePad.PaddingTop = UDim.new(0, 10)
+SidePad.PaddingLeft = UDim.new(0, 8)
+SidePad.PaddingRight = UDim.new(0, 8)
+SidePad.Parent = Sidebar
+
+-- Content
+local Content = Instance.new("Frame")
+Content.Size = UDim2.new(1, -140, 1, 0)
+Content.Position = UDim2.fromOffset(136, 0)
+Content.BackgroundColor3 = Theme.Panel
+Content.BorderSizePixel = 0
+Content.Parent = Body
+corner(Content, 12)
+
+local pages, tabButtons = {}, {}
+local currentTab = nil
+
+local function showTab(name)
+    for n, page in pairs(pages) do
+        if n == name then
+            page.Visible = true
+            page.Position = UDim2.fromOffset(8, 14)
+            tween(page, TI_Med, {Position = UDim2.fromOffset(8, 8)})
+        else
+            page.Visible = false
+        end
+    end
+    for n, btn in pairs(tabButtons) do
+        if n == name then
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.Accent})
+            btn.TextColor3 = Theme.Text
+        else
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.ToggleOff})
+            btn.TextColor3 = Theme.TextDim
+        end
+    end
+    currentTab = name
+end
+
+local function createTab(name, order)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = Theme.ToggleOff
+    btn.BorderSizePixel = 0
+    btn.Text = "  " .. name
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 13
+    btn.TextColor3 = Theme.TextDim
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.AutoButtonColor = false
+    btn.LayoutOrder = order or 0
+    btn.Parent = Sidebar
+    corner(btn, 9)
+    tabButtons[name] = btn
+
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0, 3, 0.55, 0)
+    indicator.Position = UDim2.new(0, 0, 0.225, 0)
+    indicator.BackgroundColor3 = Theme.Accent2
+    indicator.BorderSizePixel = 0
+    indicator.Visible = false
+    indicator.Name = "Ind"
+    indicator.Parent = btn
+    corner(indicator, 2)
+
+    local page = Instance.new("ScrollingFrame")
+    page.Size = UDim2.new(1, -16, 1, -16)
+    page.Position = UDim2.fromOffset(8, 8)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 3
+    page.ScrollBarImageColor3 = Theme.Accent
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.Visible = false
+    page.Parent = Content
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 7)
+    layout.Parent = page
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingBottom = UDim.new(0, 12)
+    pad.PaddingLeft = UDim.new(0, 4)
+    pad.PaddingRight = UDim.new(0, 8)
+    pad.Parent = page
+
+    pages[name] = page
+
+    btn.MouseButton1Click:Connect(function()
+        for _, b in pairs(tabButtons) do
+            local ind = b:FindFirstChild("Ind")
+            if ind then ind.Visible = false end
+        end
+        indicator.Visible = true
+        showTab(name)
+    end)
+
+    btn.MouseEnter:Connect(function()
+        if currentTab ~= name then
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.Hover})
+        end
+    end)
+    btn.MouseLeave:Connect(function()
+        if currentTab ~= name then
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.ToggleOff})
+        end
+    end)
+
+    return page
+end
+
+local function section(page, text)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 0, 20)
+    l.BackgroundTransparency = 1
+    l.Text = text:upper()
+    l.Font = Enum.Font.GothamBold
+    l.TextSize = 11
+    l.TextColor3 = Theme.Accent2
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = page
+    return l
+end
+
+local function toggle(page, title, default, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 36)
+    row.BackgroundColor3 = Theme.Bg
+    row.BorderSizePixel = 0
+    row.Parent = page
+    corner(row, 9)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -64, 1, 0)
+    lbl.Position = UDim2.fromOffset(12, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = title
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextColor3 = Theme.Text
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local state = default and true or false
+    local sw = Instance.new("TextButton")
+    sw.Size = UDim2.fromOffset(44, 24)
+    sw.Position = UDim2.new(1, -52, 0.5, -12)
+    sw.BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff
+    sw.BorderSizePixel = 0
+    sw.Text = ""
+    sw.AutoButtonColor = false
+    sw.Parent = row
+    corner(sw, 12)
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(18, 18)
+    knob.Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.fromOffset(3, 3)
+    knob.BackgroundColor3 = Theme.Text
+    knob.BorderSizePixel = 0
+    knob.Parent = sw
+    corner(knob, 9)
+
+    sw.MouseButton1Click:Connect(function()
+        state = not state
+        tween(sw, TI_Fast, {BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff})
+        tween(knob, TI_Spring, {Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.fromOffset(3, 3)})
+        if callback then callback(state) end
+    end)
+end
+
+local function button(page, title, callback)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 36)
+    b.BackgroundColor3 = Theme.Accent
+    b.BorderSizePixel = 0
+    b.Text = title
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.TextColor3 = Theme.Text
+    b.AutoButtonColor = false
+    b.Parent = page
+    corner(b, 9)
+    gradient(b, Theme.Accent, Theme.Accent2, 0)
+    b.MouseEnter:Connect(function() tween(b, TI_Fast, {Size = UDim2.new(1, 0, 0, 38)}) end)
+    b.MouseLeave:Connect(function() tween(b, TI_Fast, {Size = UDim2.new(1, 0, 0, 36)}) end)
+    b.MouseButton1Click:Connect(function()
+        if callback then callback() end
+    end)
+    return b
+end
+
+local function slider(page, title, minV, maxV, default, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 54)
+    row.BackgroundColor3 = Theme.Bg
+    row.BorderSizePixel = 0
+    row.Parent = page
+    corner(row, 9)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.65, 0, 0, 20)
+    lbl.Position = UDim2.fromOffset(12, 6)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = title
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextColor3 = Theme.Text
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local valLbl = Instance.new("TextLabel")
+    valLbl.Size = UDim2.new(0.35, -12, 0, 20)
+    valLbl.Position = UDim2.new(0.65, 0, 0, 6)
+    valLbl.BackgroundTransparency = 1
+    valLbl.Text = tostring(default)
+    valLbl.Font = Enum.Font.GothamBold
+    valLbl.TextSize = 13
+    valLbl.TextColor3 = Theme.Accent2
+    valLbl.TextXAlignment = Enum.TextXAlignment.Right
+    valLbl.Parent = row
+
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1, -24, 0, 6)
+    track.Position = UDim2.new(0, 12, 0, 36)
+    track.BackgroundColor3 = Theme.ToggleOff
+    track.BorderSizePixel = 0
+    track.Parent = row
+    corner(track, 3)
+
+    local fill = Instance.new("Frame")
+    local pct = (default - minV) / (maxV - minV)
+    fill.Size = UDim2.new(pct, 0, 1, 0)
+    fill.BackgroundColor3 = Theme.Accent
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    corner(fill, 3)
+    gradient(fill, Theme.Accent, Theme.Accent2, 0)
+
+    local value, sliding = default, false
+    local function setFromX(x)
+        local rel = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
+        value = math.floor(minV + rel * (maxV - minV) + 0.5)
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        valLbl.Text = tostring(value)
+        if callback then callback(value) end
+    end
+    track.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliding = true
+            setFromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            setFromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliding = false
+        end
+    end)
+end
+
+local function rarityRow(page)
+    local wrap = Instance.new("Frame")
+    wrap.Size = UDim2.new(1, 0, 0, 0)
+    wrap.AutomaticSize = Enum.AutomaticSize.Y
+    wrap.BackgroundTransparency = 1
+    wrap.Parent = page
+    local grid = Instance.new("UIGridLayout")
+    grid.CellSize = UDim2.fromOffset(112, 30)
+    grid.CellPadding = UDim2.fromOffset(6, 6)
+    grid.Parent = wrap
+    for _, r in ipairs(SNIPE_RARITIES) do
+        local on = STATE.SNIPE_SELECTED[r] == true
+        local b = Instance.new("TextButton")
+        b.BackgroundColor3 = on and Theme.ToggleOn or Theme.ToggleOff
+        b.BorderSizePixel = 0
+        b.Text = r
+        b.Font = Enum.Font.GothamMedium
+        b.TextSize = 11
+        b.TextColor3 = Theme.Text
+        b.AutoButtonColor = false
+        b.Parent = wrap
+        corner(b, 7)
+        b.MouseButton1Click:Connect(function()
+            STATE.SNIPE_SELECTED[r] = not STATE.SNIPE_SELECTED[r]
+            tween(b, TI_Fast, {BackgroundColor3 = STATE.SNIPE_SELECTED[r] and Theme.ToggleOn or Theme.ToggleOff})
+        end)
+    end
+end
+
+-- Toast notify
+local function notify(title, content)
+    local n = Instance.new("Frame")
+    n.Size = UDim2.fromOffset(0, 64)
+    n.Position = UDim2.new(1, -20, 0, 18)
+    n.AnchorPoint = Vector2.new(1, 0)
+    n.BackgroundColor3 = Theme.Panel
+    n.BorderSizePixel = 0
+    n.ClipsDescendants = true
+    n.Parent = ScreenGui
+    corner(n, 12)
+    stroke(n, Theme.Accent, 1.5, 0.2)
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0, 3, 1, -12)
+    bar.Position = UDim2.fromOffset(6, 6)
+    bar.BackgroundColor3 = Theme.Accent
+    bar.BorderSizePixel = 0
+    bar.Parent = n
+    corner(bar, 2)
+
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, -24, 0, 22)
+    t.Position = UDim2.fromOffset(16, 8)
+    t.BackgroundTransparency = 1
+    t.Text = title
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 13
+    t.TextColor3 = Theme.Accent2
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.Parent = n
+
+    local c = Instance.new("TextLabel")
+    c.Size = UDim2.new(1, -24, 0, 22)
+    c.Position = UDim2.fromOffset(16, 30)
+    c.BackgroundTransparency = 1
+    c.Text = content
+    c.Font = Enum.Font.Gotham
+    c.TextSize = 12
+    c.TextColor3 = Theme.Text
+    c.TextXAlignment = Enum.TextXAlignment.Left
+    c.TextTruncate = Enum.TextTruncate.AtEnd
+    c.Parent = n
+
+    tween(n, TI_Spring, {Size = UDim2.fromOffset(270, 64)})
+    task.delay(3.2, function()
+        if n and n.Parent then
+            local tw = tween(n, TI_Med, {Size = UDim2.fromOffset(0, 64), BackgroundTransparency = 1})
+            tw.Completed:Wait()
+            n:Destroy()
+        end
+    end)
+end
+_G.BrainrotNotify = notify
+
+-- Build tabs
+local MainPage = createTab("Main", 1)
+local FarmPage = createTab("Farm", 2)
+local SnipePage = createTab("Snipe", 3)
+local ESPPage = createTab("ESP", 4)
+local MiscPage = createTab("Misc", 5)
+local BasePage = createTab("Base", 6)
+local RoboPage = createTab("Robo", 7)
+
+section(MainPage, "Auto")
+toggle(MainPage, "Auto Scan", true, function(v) STATE.AUTO_SCAN_ON = v end)
+toggle(MainPage, "Auto Grab (al TPear)", true, function(v) STATE.AUTO_GRAB_ON = v end)
+toggle(MainPage, "Auto Farm (Best Clown)", false, function(v) STATE.AUTO_FARM_ON = v end)
+button(MainPage, "TP a mi Base", function()
+    if doTPBase() then notify("TP", "Volviste a tu base") end
+end)
+button(MainPage, "Forzar Scan Ahora", function()
+    updateMyBase()
+    scanAllClowns()
+    notify("Scan", "Encontrados: " .. #STATE.TOP_CLOWNS)
+end)
+
+section(FarmPage, "Top Clowns")
+button(FarmPage, "Ir al mejor (+grab)", function()
+    if STATE.BEST_CLOWN then
+        local ok, n = tpToClown(STATE.BEST_CLOWN, true)
+        notify("TP", ok and ("-> " .. tostring(n)) or "Fallo")
+    else
+        notify("TP", "No hay best clown")
+    end
+end)
+
+section(SnipePage, "Snipe por Rareza")
+toggle(SnipePage, "Snipe ON", false, function(v) STATE.SNIPE_ON = v end)
+section(SnipePage, "Rarezas")
+rarityRow(SnipePage)
+button(SnipePage, "Buscar ahora (1 vez)", function()
+    local t = findSnipeTarget()
+    if t then
+        notify("Snipe", t.nombre .. " (" .. t.rarity .. ")")
+        tpToClown(t, true)
+    else
+        notify("Snipe", "Nada")
+    end
+end)
+
+section(ESPPage, "Highlights")
+toggle(ESPPage, "ESP Best Clown", true, function(v) setESP(v) end)
+toggle(ESPPage, "ESP por Rareza", false, function(v) setESPByRarity(v) end)
+
+section(MiscPage, "Movimiento")
+toggle(MiscPage, "Speed Boost (50)", false, function(v) setSpeed(v) end)
+toggle(MiscPage, "Infinite Jump", false, function(v) setInfJump(v) end)
+toggle(MiscPage, "Noclip", false, function(v) setNoclip(v) end)
+toggle(MiscPage, "God Mode", false, function(v) setGod(v) end)
+section(MiscPage, "Rendimiento")
+toggle(MiscPage, "FPS Boost", false, function(v) setFPS(v) end)
+section(MiscPage, "Fly")
+toggle(MiscPage, "Fly ON", false, function(v)
+    if v then startFly() else stopFly() end
+end)
+slider(MiscPage, "Fly Speed", 20, 300, 60, function(v) STATE.FLY_SPEED = v end)
+toggle(MiscPage, "God Mode (dentro de Fly)", false, function(v) STATE.FLY_GOD = v end)
+
+section(BasePage, "Protecciones")
+toggle(BasePage, "Anti-Ragdoll", false, function(v) setAntiRagdoll(v) end)
+toggle(BasePage, "Anti-Bat", false, function(v)
+    if v then startAntibat() else stopAntibat() end
+end)
+toggle(BasePage, "Anti-Trap", false, function(v)
+    if v then startAntiTrap() else stopAntiTrap() end
+end)
+section(BasePage, "Defensa Activa")
+toggle(BasePage, "Auto-Defensa (Anti-Ladron)", false, function(v)
+    if v then startAutoDefense() else stopAutoDefense() end
+end)
+toggle(BasePage, "Revenge Mode", false, function(v) STATE.REVENGE_ON = v end)
+
+section(RoboPage, "Al Robarte")
+toggle(RoboPage, "Instant Steal (TP Base + Vuelta)", false, function(v) setInstantSteal(v) end)
+toggle(RoboPage, "Kick Al Robar", false, function(v) STATE.KICK_ON_STEAL = v end)
+section(RoboPage, "Recovery + Auto Bate")
+toggle(RoboPage, "Recovery Snipe", false, function(v)
+    STATE.RECOVERY_SNIPE_ON = v
+    if not v then STATE.RECOVERY_TARGETS = {} end
+end)
+toggle(RoboPage, "Auto-Bate Equip", false, function(v) STATE.AUTOBATE_ON = v end)
+button(RoboPage, "Equipar bate ahora", function()
+    equiparBate()
+    notify("Auto-Bate", "Intentado equipar")
+end)
+
+-- default tab indicator
+do
+    local b = tabButtons["Main"]
+    if b and b:FindFirstChild("Ind") then b.Ind.Visible = true end
+end
+showTab("Main")
+
+-- ===== MINIMIZE / CLOSE / OPEN animations =====
+local uiOpen = true
+local savedPos = Main.Position
+
+local function openUI()
+    uiOpen = true
+    OpenBtn.Visible = false
+    Main.Visible = true
+    Main.Size = UDim2.fromOffset(WIN_W, 0)
+    Body.Visible = true
+    tween(Main, TI_Spring, {Size = UDim2.fromOffset(WIN_W, WIN_H)})
+end
+
+local function minimizeUI()
+    uiOpen = false
+    savedPos = Main.Position
+    local tw = tween(Main, TI_Med, {Size = UDim2.fromOffset(WIN_W, 0)})
+    tw.Completed:Connect(function()
+        Main.Visible = false
+        OpenBtn.Visible = true
+        OpenBtn.Size = UDim2.fromOffset(0, 0)
+        tween(OpenBtn, TI_Spring, {Size = UDim2.fromOffset(38, 38)})
+    end)
+end
+
+local function closeUI()
+    uiOpen = false
+    local tw = tween(Main, TI_Med, {
+        Size = UDim2.fromOffset(0, 0),
+        Position = UDim2.new(Main.Position.X.Scale, Main.Position.X.Offset + WIN_W/2,
+                             Main.Position.Y.Scale, Main.Position.Y.Offset + WIN_H/2),
+    })
+    tw.Completed:Connect(function()
+        Main.Visible = false
+        Main.Position = savedPos
+        OpenBtn.Visible = true
+        OpenBtn.Size = UDim2.fromOffset(0, 0)
+        tween(OpenBtn, TI_Spring, {Size = UDim2.fromOffset(38, 38)})
+    end)
+end
+
+MinBtn.MouseButton1Click:Connect(minimizeUI)
+CloseBtn.MouseButton1Click:Connect(closeUI)
+OpenBtn.MouseButton1Click:Connect(openUI)
+
+-- Floating best clown card
+local FF = Instance.new("Frame")
+FF.Size = UDim2.fromOffset(250, 96)
+FF.Position = UDim2.fromOffset(14, 14)
+FF.BackgroundColor3 = Theme.Panel
+FF.BorderSizePixel = 0
+FF.Parent = ScreenGui
+corner(FF, 12)
+stroke(FF, Theme.Accent, 1.2, 0.25)
+makeDraggable(FF)
+
+local ffTop = Instance.new("Frame")
+ffTop.Size = UDim2.new(1, 0, 0, 3)
+ffTop.BackgroundColor3 = Theme.Accent
+ffTop.BorderSizePixel = 0
+ffTop.Parent = FF
+gradient(ffTop, Theme.Accent, Theme.Accent2, 0)
+
+local FTitle = Instance.new("TextLabel")
+FTitle.Size = UDim2.new(1, -12, 0, 18)
+FTitle.Position = UDim2.fromOffset(10, 8)
+FTitle.BackgroundTransparency = 1
+FTitle.Text = "MEJOR PAYASO"
+FTitle.Font = Enum.Font.GothamBold
+FTitle.TextSize = 11
+FTitle.TextColor3 = Theme.Accent2
+FTitle.TextXAlignment = Enum.TextXAlignment.Left
+FTitle.Parent = FF
+
+local FName = Instance.new("TextLabel")
+FName.Size = UDim2.new(1, -12, 0, 20)
+FName.Position = UDim2.fromOffset(10, 28)
+FName.BackgroundTransparency = 1
+FName.Text = "-"
+FName.Font = Enum.Font.GothamBold
+FName.TextSize = 15
+FName.TextColor3 = Theme.Text
+FName.TextXAlignment = Enum.TextXAlignment.Left
+FName.TextTruncate = Enum.TextTruncate.AtEnd
+FName.Parent = FF
+
+local FMoney = Instance.new("TextLabel")
+FMoney.Size = UDim2.new(1, -100, 0, 16)
+FMoney.Position = UDim2.fromOffset(10, 50)
+FMoney.BackgroundTransparency = 1
+FMoney.Text = "$0/s"
+FMoney.Font = Enum.Font.GothamMedium
+FMoney.TextSize = 13
+FMoney.TextColor3 = Theme.Success
+FMoney.TextXAlignment = Enum.TextXAlignment.Left
+FMoney.Parent = FF
+
+local FPlot = Instance.new("TextLabel")
+FPlot.Size = UDim2.new(1, -100, 0, 14)
+FPlot.Position = UDim2.fromOffset(10, 70)
+FPlot.BackgroundTransparency = 1
+FPlot.Text = "Plot: - | Slot: -"
+FPlot.Font = Enum.Font.Gotham
+FPlot.TextSize = 11
+FPlot.TextColor3 = Theme.TextDim
+FPlot.TextXAlignment = Enum.TextXAlignment.Left
+FPlot.Parent = FF
+
+local FBtn = Instance.new("TextButton")
+FBtn.Size = UDim2.fromOffset(78, 24)
+FBtn.Position = UDim2.new(1, -88, 1, -32)
+FBtn.BackgroundColor3 = Theme.Accent
+FBtn.BorderSizePixel = 0
+FBtn.Text = "Ir (+grab)"
+FBtn.Font = Enum.Font.GothamBold
+FBtn.TextSize = 11
+FBtn.TextColor3 = Theme.Text
+FBtn.AutoButtonColor = false
+FBtn.Parent = FF
+corner(FBtn, 7)
+FBtn.MouseButton1Click:Connect(function()
+    if STATE.BEST_CLOWN then tpToClown(STATE.BEST_CLOWN, true) end
+end)
+
+task.spawn(function()
+    while ScreenGui.Parent do
+        task.wait(0.5)
+        local b = STATE.BEST_CLOWN
+        if not b then
+            FName.Text = "-"
+            FMoney.Text = "$0/s"
+            FPlot.Text = "Plot: - | Slot: -"
+        else
+            FName.Text = tostring(b.nombre)
+            FMoney.Text = formatGen(b.total)
+            FPlot.Text = "Plot: " .. tostring(b.plot) .. " | Slot: " .. tostring(b.slot)
+        end
+    end
+end)
+
+-- Reason panel
+local RFrame = Instance.new("Frame")
+RFrame.Size = UDim2.fromOffset(250, 100)
+RFrame.Position = UDim2.fromOffset(14, 122)
+RFrame.BackgroundColor3 = Color3.fromRGB(28, 12, 16)
+RFrame.BorderSizePixel = 0
+RFrame.Visible = true
+RFrame.Parent = ScreenGui
+corner(RFrame, 12)
+stroke(RFrame, Theme.Accent, 1.2, 0.2)
+makeDraggable(RFrame)
+
+local rTop = Instance.new("Frame")
+rTop.Size = UDim2.new(1, 0, 0, 3)
+rTop.BackgroundColor3 = Theme.Accent
+rTop.BorderSizePixel = 0
+rTop.Parent = RFrame
+gradient(rTop, Theme.Accent, Theme.Accent2, 0)
+
+local RTitle = Instance.new("TextLabel")
+RTitle.Size = UDim2.new(1, -12, 0, 16)
+RTitle.Position = UDim2.fromOffset(10, 10)
+RTitle.BackgroundTransparency = 1
+RTitle.Text = "AUTOMATIC KICK"
+RTitle.Font = Enum.Font.GothamBold
+RTitle.TextSize = 11
+RTitle.TextColor3 = Theme.Accent
+RTitle.TextXAlignment = Enum.TextXAlignment.Left
+RTitle.Parent = RFrame
+
+local RText = Instance.new("TextLabel")
+RText.Size = UDim2.new(1, -12, 0, 36)
+RText.Position = UDim2.fromOffset(10, 28)
+RText.BackgroundTransparency = 1
+RText.Text = "Mensaje de kick (editable). Usa el boton para kickearte a ti mismo."
+RText.Font = Enum.Font.Gotham
+RText.TextSize = 12
+RText.TextColor3 = Theme.Text
+RText.TextXAlignment = Enum.TextXAlignment.Left
+RText.TextYAlignment = Enum.TextYAlignment.Top
+RText.TextWrapped = true
+RText.Parent = RFrame
+
+local RKick = Instance.new("TextButton")
+RKick.Size = UDim2.fromOffset(100, 22)
+RKick.Position = UDim2.new(1, -110, 1, -28)
+RKick.BackgroundColor3 = Theme.Accent
+RKick.BorderSizePixel = 0
+RKick.Text = "Kickearme"
+RKick.Font = Enum.Font.GothamBold
+RKick.TextSize = 11
+RKick.TextColor3 = Theme.Text
+RKick.AutoButtonColor = false
+RKick.Parent = RFrame
+corner(RKick, 7)
+RKick.MouseButton1Click:Connect(function()
+    LocalPlayer:Kick(RText.Text)
+end)
+
+-- Aparece al ejecutar el script (no solo al ser kickeado)
+task.defer(function()
+    RFrame.Size = UDim2.fromOffset(0, 100)
+    tween(RFrame, TI_Spring, {Size = UDim2.fromOffset(250, 100)})
+end)
+
+_G.BrainrotShowReason = function(r)
+    RText.Text = tostring(r)
+    RFrame.Visible = true
+    tween(RFrame, TI_Spring, {Size = UDim2.fromOffset(250, 100)})
+end
+
+-- RightShift toggle
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        if uiOpen then minimizeUI() else openUI() end
+    end
+end)
+
+-- intro animation
+Main.Size = UDim2.fromOffset(WIN_W, 0)
+task.defer(function()
+    tween(Main, TI_Spring, {Size = UDim2.fromOffset(WIN_W, WIN_H)})
+end)
+
+notify("Brainrot Ultimate", "GUI lista · RightShift / botón B")
+print("[Brainrot Ultimate] GUI animada cargada")

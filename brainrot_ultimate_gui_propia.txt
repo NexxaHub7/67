@@ -1157,7 +1157,7 @@ OpenBtn.MouseLeave:Connect(function()
 end)
 
 -- ===== MAIN WINDOW =====
-local WIN_W, WIN_H = 580, 440
+local WIN_W, WIN_H = 480, 360
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.Size = UDim2.fromOffset(WIN_W, WIN_H)
@@ -1167,22 +1167,69 @@ Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Parent = ScreenGui
 corner(Main, 14)
-local mainStroke = stroke(Main, Theme.Stroke, 1.5)
+local mainStroke = stroke(Main, Theme.Accent, 1.4, 0.35)
 
--- soft glow bar top
+-- Background image
+local BgImage = Instance.new("ImageLabel")
+BgImage.Name = "BgImage"
+BgImage.Size = UDim2.new(1, 0, 1, 0)
+BgImage.BackgroundTransparency = 1
+BgImage.Image = "rbxassetid://10744854425"
+BgImage.ImageTransparency = 0.55
+BgImage.ScaleType = Enum.ScaleType.Crop
+BgImage.ZIndex = 0
+BgImage.Parent = Main
+corner(BgImage, 14)
+
+-- Dark overlay so text stays readable
+local BgDim = Instance.new("Frame")
+BgDim.Size = UDim2.new(1, 0, 1, 0)
+BgDim.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+BgDim.BackgroundTransparency = 0.35
+BgDim.BorderSizePixel = 0
+BgDim.ZIndex = 0
+BgDim.Parent = Main
+corner(BgDim, 14)
+
+-- Accent top glow line
 local Glow = Instance.new("Frame")
 Glow.Size = UDim2.new(1, 0, 0, 3)
 Glow.BackgroundColor3 = Theme.Accent
 Glow.BorderSizePixel = 0
+Glow.ZIndex = 2
 Glow.Parent = Main
 gradient(Glow, Theme.Accent, Theme.Accent2, 0)
+
+-- Decorative side accent strip
+local SideDecor = Instance.new("Frame")
+SideDecor.Size = UDim2.new(0, 3, 1, -20)
+SideDecor.Position = UDim2.fromOffset(0, 10)
+SideDecor.BackgroundColor3 = Theme.Accent
+SideDecor.BorderSizePixel = 0
+SideDecor.ZIndex = 2
+SideDecor.Parent = Main
+gradient(SideDecor, Theme.Accent, Theme.Accent2, 90)
+corner(SideDecor, 2)
+
+-- Bottom subtle line
+local BotGlow = Instance.new("Frame")
+BotGlow.Size = UDim2.new(0.4, 0, 0, 2)
+BotGlow.Position = UDim2.new(0.3, 0, 1, -2)
+BotGlow.BackgroundColor3 = Theme.Accent2
+BotGlow.BorderSizePixel = 0
+BotGlow.BackgroundTransparency = 0.3
+BotGlow.ZIndex = 2
+BotGlow.Parent = Main
+corner(BotGlow, 1)
 
 -- Title bar
 local TitleBar = Instance.new("Frame")
 TitleBar.Size = UDim2.new(1, 0, 0, 44)
 TitleBar.Position = UDim2.fromOffset(0, 3)
 TitleBar.BackgroundColor3 = Theme.Panel
+TitleBar.BackgroundTransparency = 0.15
 TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 3
 TitleBar.Parent = Main
 
 local Title = Instance.new("TextLabel")
@@ -1238,6 +1285,7 @@ Body.Size = UDim2.new(1, -16, 1, -56)
 Body.Position = UDim2.fromOffset(8, 50)
 Body.BackgroundTransparency = 1
 Body.ClipsDescendants = true
+Body.ZIndex = 3
 Body.Parent = Main
 
 -- Sidebar
@@ -1845,21 +1893,28 @@ end)
 
 -- Reason panel
 local RFrame = Instance.new("Frame")
-RFrame.Size = UDim2.fromOffset(240, 88)
+RFrame.Size = UDim2.fromOffset(250, 100)
 RFrame.Position = UDim2.fromOffset(14, 122)
 RFrame.BackgroundColor3 = Color3.fromRGB(28, 12, 16)
 RFrame.BorderSizePixel = 0
-RFrame.Visible = false
+RFrame.Visible = true
 RFrame.Parent = ScreenGui
 corner(RFrame, 12)
 stroke(RFrame, Theme.Accent, 1.2, 0.2)
 makeDraggable(RFrame)
 
+local rTop = Instance.new("Frame")
+rTop.Size = UDim2.new(1, 0, 0, 3)
+rTop.BackgroundColor3 = Theme.Accent
+rTop.BorderSizePixel = 0
+rTop.Parent = RFrame
+gradient(rTop, Theme.Accent, Theme.Accent2, 0)
+
 local RTitle = Instance.new("TextLabel")
 RTitle.Size = UDim2.new(1, -12, 0, 16)
-RTitle.Position = UDim2.fromOffset(10, 8)
+RTitle.Position = UDim2.fromOffset(10, 10)
 RTitle.BackgroundTransparency = 1
-RTitle.Text = "RAZON"
+RTitle.Text = "AUTOMATIC KICK"
 RTitle.Font = Enum.Font.GothamBold
 RTitle.TextSize = 11
 RTitle.TextColor3 = Theme.Accent
@@ -1867,10 +1922,10 @@ RTitle.TextXAlignment = Enum.TextXAlignment.Left
 RTitle.Parent = RFrame
 
 local RText = Instance.new("TextLabel")
-RText.Size = UDim2.new(1, -12, 0, 34)
-RText.Position = UDim2.fromOffset(10, 26)
+RText.Size = UDim2.new(1, -12, 0, 36)
+RText.Position = UDim2.fromOffset(10, 28)
 RText.BackgroundTransparency = 1
-RText.Text = "-"
+RText.Text = "Mensaje de kick (editable). Usa el boton para kickearte a ti mismo."
 RText.Font = Enum.Font.Gotham
 RText.TextSize = 12
 RText.TextColor3 = Theme.Text
@@ -1880,25 +1935,31 @@ RText.TextWrapped = true
 RText.Parent = RFrame
 
 local RKick = Instance.new("TextButton")
-RKick.Size = UDim2.fromOffset(96, 20)
-RKick.Position = UDim2.new(1, -106, 1, -26)
+RKick.Size = UDim2.fromOffset(100, 22)
+RKick.Position = UDim2.new(1, -110, 1, -28)
 RKick.BackgroundColor3 = Theme.Accent
 RKick.BorderSizePixel = 0
 RKick.Text = "Kickearme"
 RKick.Font = Enum.Font.GothamBold
 RKick.TextSize = 11
 RKick.TextColor3 = Theme.Text
+RKick.AutoButtonColor = false
 RKick.Parent = RFrame
-corner(RKick, 6)
+corner(RKick, 7)
 RKick.MouseButton1Click:Connect(function()
     LocalPlayer:Kick(RText.Text)
+end)
+
+-- Aparece al ejecutar el script (no solo al ser kickeado)
+task.defer(function()
+    RFrame.Size = UDim2.fromOffset(0, 100)
+    tween(RFrame, TI_Spring, {Size = UDim2.fromOffset(250, 100)})
 end)
 
 _G.BrainrotShowReason = function(r)
     RText.Text = tostring(r)
     RFrame.Visible = true
-    RFrame.Size = UDim2.fromOffset(0, 88)
-    tween(RFrame, TI_Spring, {Size = UDim2.fromOffset(240, 88)})
+    tween(RFrame, TI_Spring, {Size = UDim2.fromOffset(250, 100)})
 end
 
 -- RightShift toggle

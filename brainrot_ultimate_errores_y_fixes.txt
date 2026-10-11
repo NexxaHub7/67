@@ -1,0 +1,312 @@
+================================================================================
+BRAINROT ULTIMATE - ERRORES DETECTADOS Y CORRECCIONES
+================================================================================
+Script: Brainrot Ultimate (WindUI)
+Fecha analisis: 2026-10-10
+================================================================================
+
+--------------------------------------------------------------------------------
+ERROR 1 (CRITICO - SINTAXIS): recoveryLoop tiene "end" de mas
+--------------------------------------------------------------------------------
+Severidad: CRITICA
+Efecto: El script no compila / error tipo "Expected end" o "Unexpected symbol near end"
+
+Ubicacion: funcion recoveryLoop (final del bloque)
+
+Problema:
+  Hay 18 "end" cerrando ~16 bloques. Sobran 2 end.
+  Depth final del parser: -2
+
+Codigo roto (cierre actual, conceptual):
+  end end end end end end end end end end end)end
+
+Correccion: reemplazar TODA la funcion recoveryLoop por esta version
+balanceada:
+
+local function recoveryLoop()
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            if STATE.RECOVERY_SNIPE_ON then
+                local a = os.clock()
+                for n, info in pairs(STATE.RECOVERY_TARGETS) do
+                    if a - info.hora > 60 then
+                        STATE.RECOVERY_TARGETS[n] = nil
+                    else
+                        local ps = Workspace:FindFirstChild("Plots")
+                        if ps then
+                            local enc = false
+                            for _, p in ipairs(ps:GetChildren()) do
+                                if not enc then
+                                    local pod = p:FindFirstChild("AnimalPodiums")
+                                    if pod then
+                                        for _, po in ipairs(pod:GetChildren()) do
+                                            local b = po:FindFirstChild("Base")
+                                            if b then
+                                                local oh = b:FindFirstChild("AnimalOverhead", true)
+                                                local data = oh and readOverhead(oh)
+                                                if data and data.displayName == n then
+                                                    local pr = getPodiumPrompt(po)
+                                                    if pr and isStealablePrompt(pr) then
+                                                        local obj = {
+                                                            plot = p.Name,
+                                                            slot = po.Name,
+                                                            nombre = n,
+                                                            prompt = pr,
+                                                            base = b
+                                                        }
+                                                        print("[Recovery] Recuperando:", n)
+                                                        pcall(function()
+                                                            tpToClown(obj, true)
+                                                        end)
+                                                        STATE.RECOVERY_TARGETS[n] = nil
+                                                        if _G.BrainrotNotify then
+                                                            _G.BrainrotNotify("Recovery", "Recuperado: " .. n)
+                                                        end
+                                                        enc = true
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+
+--------------------------------------------------------------------------------
+ERROR 2 (CRITICO - RUNTIME): GuiObject.Draggable eliminado
+--------------------------------------------------------------------------------
+Severidad: CRITICA (en Roblox actual)
+Efecto: Error al crear GUI flotante:
+  "Draggable is not a valid member of Frame"
+
+Ubicacion:
+  1) Floating frame del "Mejor Payaso"
+  2) Frame de "Razon" (Kick)
+
+Codigo roto:
+  FF.Draggable = true
+  RFrame.Draggable = true
+
+Correccion A (simple): BORRAR esas dos lineas.
+
+Correccion B (drag manual, opcional):
+
+local function makeDraggable(frame)
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+-- Uso:
+-- makeDraggable(FF)
+-- makeDraggable(RFrame)
+
+
+--------------------------------------------------------------------------------
+ERROR 3 (RUNTIME / EXECUTOR): fireproximityprompt
+--------------------------------------------------------------------------------
+Severidad: MEDIA (solo falla fuera de executor)
+Efecto: autoGrabAt no agarra el payaso si no existe fireproximityprompt
+
+Ubicacion: funcion autoGrabAt
+
+Codigo actual:
+  fireproximityprompt(p)
+
+Correccion recomendada:
+
+pcall(function()
+    p.HoldDuration = 0
+    p.MaxActivationDistance = math.huge
+    p.RequiresLineOfSight = false
+    if fireproximityprompt then
+        fireproximityprompt(p)
+    elseif firesignal and p.Triggered then
+        firesignal(p.Triggered)
+    end
+end)
+
+
+--------------------------------------------------------------------------------
+ERROR 4 (DEPRECADO): BodyVelocity / BodyGyro en Fly
+--------------------------------------------------------------------------------
+Severidad: BAJA-MEDIA
+Efecto: Warnings o comportamiento raro en motores nuevos.
+  BodyVelocity y BodyGyro estan deprecados.
+
+Ubicacion: startFly / stopFly
+
+Codigo actual:
+  Instance.new("BodyVelocity")
+  Instance.new("BodyGyro")
+
+Correccion moderna (LinearVelocity + AlignOrientation):
+
+local function startFly()
+    stopFly()
+    STATE.FLY_ON = true
+    local c = LocalPlayer.Character
+    local h = c and c:FindFirstChild("HumanoidRootPart")
+    if not h then return end
+
+    local att = Instance.new("Attachment")
+    att.Name = "FlyAttachment"
+    att.Parent = h
+
+    local lv = Instance.new("LinearVelocity")
+    lv.Attachment0 = att
+    lv.MaxForce = math.huge
+    lv.VectorVelocity = Vector3.zero
+    lv.RelativeTo = Enum.ActuatorRelativeTo.World
+    lv.Parent = h
+    STATE.FLY_BV = lv
+
+    local ao = Instance.new("AlignOrientation")
+    ao.Attachment0 = att
+    ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    ao.Responsiveness = 50
+    ao.MaxTorque = math.huge
+    ao.Parent = h
+    STATE.FLY_BG = ao
+
+    table.insert(STATE.FLY_CONNS, RunService.RenderStepped:Connect(function()
+        if not STATE.FLY_ON then return end
+        local cc = LocalPlayer.Character
+        local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+        if not hh then return end
+        local cam = Workspace.CurrentCamera
+        local dir = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.yAxis end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.yAxis end
+        if dir.Magnitude > 0 then
+            lv.VectorVelocity = dir.Unit * STATE.FLY_SPEED
+        else
+            lv.VectorVelocity = Vector3.zero
+        end
+        ao.CFrame = cam.CFrame
+        if STATE.FLY_GOD then
+            local hu = cc:FindFirstChildOfClass("Humanoid")
+            if hu then
+                hu.MaxHealth = math.huge
+                hu.Health = math.huge
+            end
+        end
+    end))
+end
+
+-- En stopFly: destruir LinearVelocity/AlignOrientation y el Attachment
+-- (mismo patron que ya usas con FLY_BV / FLY_BG)
+
+
+--------------------------------------------------------------------------------
+ERROR 5 (MENOR): Slider Callback puede recibir number (OK en WindUI actual)
+--------------------------------------------------------------------------------
+Severidad: BAJA / INFO
+Ubicacion:
+  Tabs.Misc:Slider({ Title="Fly Speed", Value={Min=20,Max=300,Default=60}, ... })
+
+Nota:
+  En WindUI v1.6.x el formato Value={Min,Max,Default} ES CORRECTO.
+  FormatValue devuelve number (math.floor o tonumber con 2 decimales).
+  No requiere cambio obligatorio.
+
+Proteccion opcional:
+  Callback = function(v)
+      STATE.FLY_SPEED = tonumber(v) or 60
+  end
+
+
+--------------------------------------------------------------------------------
+ERROR 6 (MENOR): WindUI load desde GitHub releases
+--------------------------------------------------------------------------------
+Severidad: BAJA
+Ubicacion: primera linea
+
+Codigo:
+  loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+Puede fallar si:
+  - HttpGet no sigue redirects
+  - GitHub rate-limit / bloqueo
+
+Alternativa mas estable (si tienes mirror):
+  -- usar raw conocido o cache local
+  -- verificar que WindUI no sea nil antes de CreateWindow:
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+assert(WindUI and WindUI.CreateWindow, "WindUI no cargo correctamente")
+
+
+--------------------------------------------------------------------------------
+ERROR 7 (MENOR): findSnipeTarget no ordena por mejor gen
+--------------------------------------------------------------------------------
+Severidad: BAJA (logica, no crash)
+Efecto: Snipa el primer match de rareza, no el de mayor $/s
+
+Correccion opcional: acumular candidatos y elegir max gen, igual que scanAllClowns.
+
+
+--------------------------------------------------------------------------------
+ERROR 8 (MENOR): God Mode con MaxHealth = math.huge
+--------------------------------------------------------------------------------
+Severidad: BAJA
+Efecto: Algunos juegos resetean health o detectan valores absurdos.
+
+Alternativa mas segura:
+  h.MaxHealth = 1e9
+  h.Health = 1e9
+
+
+--------------------------------------------------------------------------------
+CHECKLIST DE PARCHE RAPIDO
+--------------------------------------------------------------------------------
+[ ] 1. Reemplazar recoveryLoop por la version balanceada (ERROR 1)
+[ ] 2. Quitar FF.Draggable y RFrame.Draggable (ERROR 2)
+[ ] 3. (Opcional) makeDraggable manual
+[ ] 4. (Opcional) pcall + check fireproximityprompt (ERROR 3)
+[ ] 5. (Opcional) migrar Fly a LinearVelocity (ERROR 4)
+[ ] 6. assert de WindUI tras loadstring (ERROR 6)
+
+Sin el 1 y el 2 el script NO es usable de forma fiable.
+El resto mejora estabilidad.
+
+================================================================================
+FIN DEL ARCHIVO
+================================================================================

@@ -1031,22 +1031,34 @@ task.spawn(function()
 end)
 
 ----------------------------------------------------------------
--- GUI PROPIA
+-- GUI PROPIA  (animada / minimize total / open pequeño)
 ----------------------------------------------------------------
 
 local Theme = {
-    Bg = Color3.fromRGB(16, 16, 22),
-    Panel = Color3.fromRGB(22, 22, 30),
-    Sidebar = Color3.fromRGB(18, 18, 26),
-    Accent = Color3.fromRGB(255, 70, 90),
-    Accent2 = Color3.fromRGB(255, 120, 60),
-    Text = Color3.fromRGB(240, 240, 245),
-    TextDim = Color3.fromRGB(140, 140, 155),
-    ToggleOff = Color3.fromRGB(45, 45, 58),
-    ToggleOn = Color3.fromRGB(255, 70, 90),
-    Stroke = Color3.fromRGB(40, 40, 55),
-    Success = Color3.fromRGB(80, 220, 120),
+    Bg = Color3.fromRGB(12, 12, 18),
+    Panel = Color3.fromRGB(18, 18, 26),
+    Sidebar = Color3.fromRGB(14, 14, 22),
+    Accent = Color3.fromRGB(255, 55, 85),
+    Accent2 = Color3.fromRGB(255, 140, 70),
+    AccentGlow = Color3.fromRGB(255, 80, 110),
+    Text = Color3.fromRGB(245, 245, 250),
+    TextDim = Color3.fromRGB(130, 130, 150),
+    ToggleOff = Color3.fromRGB(40, 40, 55),
+    ToggleOn = Color3.fromRGB(255, 55, 85),
+    Stroke = Color3.fromRGB(45, 45, 60),
+    Success = Color3.fromRGB(80, 230, 130),
+    Hover = Color3.fromRGB(28, 28, 40),
 }
+
+local TI_Fast = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_Med  = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_Spring = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+local function tween(obj, info, props)
+    local t = TweenService:Create(obj, info or TI_Fast, props)
+    t:Play()
+    return t
+end
 
 local function corner(parent, r)
     local c = Instance.new("UICorner")
@@ -1055,12 +1067,21 @@ local function corner(parent, r)
     return c
 end
 
-local function stroke(parent, color, thickness)
+local function stroke(parent, color, thickness, transparency)
     local s = Instance.new("UIStroke")
     s.Color = color or Theme.Stroke
     s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
     s.Parent = parent
     return s
+end
+
+local function gradient(parent, c1, c2, rot)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(c1, c2)
+    g.Rotation = rot or 90
+    g.Parent = parent
+    return g
 end
 
 local function makeDraggable(frame, handle)
@@ -1085,7 +1106,18 @@ local function makeDraggable(frame, handle)
     end)
 end
 
--- Root GUI
+local function hoverScale(btn, normal, hover)
+    normal = normal or 1
+    hover = hover or 1.04
+    btn.MouseEnter:Connect(function()
+        tween(btn, TI_Fast, {BackgroundTransparency = math.max(0, (btn.BackgroundTransparency or 0) - 0.05)})
+    end)
+    btn.MouseLeave:Connect(function()
+        tween(btn, TI_Fast, {BackgroundTransparency = btn:GetAttribute("BaseTrans") or 0})
+    end)
+end
+
+-- cleanup
 pcall(function()
     local old = LocalPlayer.PlayerGui:FindFirstChild("BrainrotUltimateUI")
     if old then old:Destroy() end
@@ -1098,33 +1130,64 @@ ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
+-- ===== OPEN BUTTON (pequeño, siempre accesible) =====
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Name = "OpenBtn"
+OpenBtn.Size = UDim2.fromOffset(38, 38)
+OpenBtn.Position = UDim2.new(0, 14, 0.5, -19)
+OpenBtn.BackgroundColor3 = Theme.Accent
+OpenBtn.BorderSizePixel = 0
+OpenBtn.Text = "B"
+OpenBtn.Font = Enum.Font.GothamBlack
+OpenBtn.TextSize = 16
+OpenBtn.TextColor3 = Theme.Text
+OpenBtn.Visible = false
+OpenBtn.ZIndex = 50
+OpenBtn.Parent = ScreenGui
+corner(OpenBtn, 10)
+stroke(OpenBtn, Theme.AccentGlow, 1.5, 0.3)
+gradient(OpenBtn, Theme.Accent, Theme.Accent2, 45)
+makeDraggable(OpenBtn, OpenBtn)
+
+OpenBtn.MouseEnter:Connect(function()
+    tween(OpenBtn, TI_Fast, {Size = UDim2.fromOffset(42, 42)})
+end)
+OpenBtn.MouseLeave:Connect(function()
+    tween(OpenBtn, TI_Fast, {Size = UDim2.fromOffset(38, 38)})
+end)
+
+-- ===== MAIN WINDOW =====
+local WIN_W, WIN_H = 580, 440
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.fromOffset(560, 420)
-Main.Position = UDim2.new(0.5, -280, 0.5, -210)
+Main.Size = UDim2.fromOffset(WIN_W, WIN_H)
+Main.Position = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2)
 Main.BackgroundColor3 = Theme.Bg
 Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
 Main.Parent = ScreenGui
-corner(Main, 12)
-stroke(Main, Theme.Stroke, 1.5)
+corner(Main, 14)
+local mainStroke = stroke(Main, Theme.Stroke, 1.5)
 
+-- soft glow bar top
+local Glow = Instance.new("Frame")
+Glow.Size = UDim2.new(1, 0, 0, 3)
+Glow.BackgroundColor3 = Theme.Accent
+Glow.BorderSizePixel = 0
+Glow.Parent = Main
+gradient(Glow, Theme.Accent, Theme.Accent2, 0)
+
+-- Title bar
 local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 40)
+TitleBar.Size = UDim2.new(1, 0, 0, 44)
+TitleBar.Position = UDim2.fromOffset(0, 3)
 TitleBar.BackgroundColor3 = Theme.Panel
 TitleBar.BorderSizePixel = 0
 TitleBar.Parent = Main
-corner(TitleBar, 12)
-
-local TitleBarFix = Instance.new("Frame")
-TitleBarFix.Size = UDim2.new(1, 0, 0, 14)
-TitleBarFix.Position = UDim2.new(0, 0, 1, -14)
-TitleBarFix.BackgroundColor3 = Theme.Panel
-TitleBarFix.BorderSizePixel = 0
-TitleBarFix.Parent = TitleBar
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -100, 1, 0)
-Title.Position = UDim2.fromOffset(14, 0)
+Title.Size = UDim2.new(1, -120, 1, 0)
+Title.Position = UDim2.fromOffset(16, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "Brainrot Ultimate"
 Title.Font = Enum.Font.GothamBold
@@ -1133,117 +1196,135 @@ Title.TextColor3 = Theme.Text
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = TitleBar
 
-local function titleBtn(text, x, color)
+local SubTitle = Instance.new("TextLabel")
+SubTitle.Size = UDim2.new(1, -120, 0, 14)
+SubTitle.Position = UDim2.fromOffset(16, 26)
+SubTitle.BackgroundTransparency = 1
+SubTitle.Text = "Steal · Snipe · Defense"
+SubTitle.Font = Enum.Font.Gotham
+SubTitle.TextSize = 11
+SubTitle.TextColor3 = Theme.TextDim
+SubTitle.TextXAlignment = Enum.TextXAlignment.Left
+SubTitle.Parent = TitleBar
+
+local function chromeBtn(txt, xOff, bg)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(28, 28)
-    b.Position = UDim2.new(1, x, 0.5, -14)
-    b.BackgroundColor3 = color
+    b.Size = UDim2.fromOffset(30, 30)
+    b.Position = UDim2.new(1, xOff, 0.5, -15)
+    b.BackgroundColor3 = bg
     b.BorderSizePixel = 0
-    b.Text = text
+    b.Text = txt
     b.Font = Enum.Font.GothamBold
     b.TextSize = 14
     b.TextColor3 = Theme.Text
+    b.AutoButtonColor = false
     b.Parent = TitleBar
-    corner(b, 6)
+    corner(b, 8)
+    b:SetAttribute("BaseTrans", 0)
+    b.MouseEnter:Connect(function() tween(b, TI_Fast, {Size = UDim2.fromOffset(32, 32)}) end)
+    b.MouseLeave:Connect(function() tween(b, TI_Fast, {Size = UDim2.fromOffset(30, 30)}) end)
     return b
 end
 
-local MinBtn = titleBtn("–", -68, Color3.fromRGB(50, 50, 65))
-local CloseBtn = titleBtn("×", -34, Theme.Accent)
+local MinBtn = chromeBtn("–", -78, Color3.fromRGB(48, 48, 62))
+local CloseBtn = chromeBtn("×", -40, Theme.Accent)
 
 makeDraggable(Main, TitleBar)
 
-local minimized = false
-local fullSize = Main.Size
-
-MinBtn.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    if minimized then
-        Main.Size = UDim2.fromOffset(560, 40)
-        for _, ch in ipairs(Main:GetChildren()) do
-            if ch ~= TitleBar then ch.Visible = false end
-        end
-        MinBtn.Text = "+"
-    else
-        Main.Size = fullSize
-        for _, ch in ipairs(Main:GetChildren()) do
-            ch.Visible = true
-        end
-        MinBtn.Text = "–"
-    end
-end)
-
-CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
-end)
+-- Body (todo lo que se minimiza)
+local Body = Instance.new("Frame")
+Body.Name = "Body"
+Body.Size = UDim2.new(1, -16, 1, -56)
+Body.Position = UDim2.fromOffset(8, 50)
+Body.BackgroundTransparency = 1
+Body.ClipsDescendants = true
+Body.Parent = Main
 
 -- Sidebar
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 130, 1, -48)
-Sidebar.Position = UDim2.fromOffset(8, 44)
+Sidebar.Size = UDim2.new(0, 128, 1, 0)
 Sidebar.BackgroundColor3 = Theme.Sidebar
 Sidebar.BorderSizePixel = 0
-Sidebar.Parent = Main
-corner(Sidebar, 10)
+Sidebar.Parent = Body
+corner(Sidebar, 12)
 
 local SideList = Instance.new("UIListLayout")
-SideList.Padding = UDim.new(0, 4)
+SideList.Padding = UDim.new(0, 5)
+SideList.SortOrder = Enum.SortOrder.LayoutOrder
 SideList.Parent = Sidebar
 
 local SidePad = Instance.new("UIPadding")
-SidePad.PaddingTop = UDim.new(0, 8)
-SidePad.PaddingLeft = UDim.new(0, 6)
-SidePad.PaddingRight = UDim.new(0, 6)
+SidePad.PaddingTop = UDim.new(0, 10)
+SidePad.PaddingLeft = UDim.new(0, 8)
+SidePad.PaddingRight = UDim.new(0, 8)
 SidePad.Parent = Sidebar
 
 -- Content
 local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -154, 1, -48)
-Content.Position = UDim2.fromOffset(146, 44)
+Content.Size = UDim2.new(1, -140, 1, 0)
+Content.Position = UDim2.fromOffset(136, 0)
 Content.BackgroundColor3 = Theme.Panel
 Content.BorderSizePixel = 0
-Content.Parent = Main
-corner(Content, 10)
+Content.Parent = Body
+corner(Content, 12)
 
-local pages = {}
-local tabButtons = {}
+local pages, tabButtons = {}, {}
 local currentTab = nil
 
 local function showTab(name)
     for n, page in pairs(pages) do
-        page.Visible = (n == name)
+        if n == name then
+            page.Visible = true
+            page.Position = UDim2.fromOffset(8, 14)
+            tween(page, TI_Med, {Position = UDim2.fromOffset(8, 8)})
+        else
+            page.Visible = false
+        end
     end
     for n, btn in pairs(tabButtons) do
         if n == name then
-            btn.BackgroundColor3 = Theme.Accent
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.Accent})
             btn.TextColor3 = Theme.Text
         else
-            btn.BackgroundColor3 = Theme.ToggleOff
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.ToggleOff})
             btn.TextColor3 = Theme.TextDim
         end
     end
     currentTab = name
 end
 
-local function createTab(name)
+local function createTab(name, order)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.Size = UDim2.new(1, 0, 0, 34)
     btn.BackgroundColor3 = Theme.ToggleOff
     btn.BorderSizePixel = 0
-    btn.Text = name
+    btn.Text = "  " .. name
     btn.Font = Enum.Font.GothamMedium
     btn.TextSize = 13
     btn.TextColor3 = Theme.TextDim
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.AutoButtonColor = false
+    btn.LayoutOrder = order or 0
     btn.Parent = Sidebar
-    corner(btn, 8)
+    corner(btn, 9)
     tabButtons[name] = btn
 
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0, 3, 0.55, 0)
+    indicator.Position = UDim2.new(0, 0, 0.225, 0)
+    indicator.BackgroundColor3 = Theme.Accent2
+    indicator.BorderSizePixel = 0
+    indicator.Visible = false
+    indicator.Name = "Ind"
+    indicator.Parent = btn
+    corner(indicator, 2)
+
     local page = Instance.new("ScrollingFrame")
-    page.Size = UDim2.new(1, -12, 1, -12)
-    page.Position = UDim2.fromOffset(6, 6)
+    page.Size = UDim2.new(1, -16, 1, -16)
+    page.Position = UDim2.fromOffset(8, 8)
     page.BackgroundTransparency = 1
     page.BorderSizePixel = 0
-    page.ScrollBarThickness = 4
+    page.ScrollBarThickness = 3
     page.ScrollBarImageColor3 = Theme.Accent
     page.CanvasSize = UDim2.new(0, 0, 0, 0)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -1251,20 +1332,36 @@ local function createTab(name)
     page.Parent = Content
 
     local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 7)
     layout.Parent = page
 
     local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 6)
-    pad.PaddingBottom = UDim.new(0, 10)
-    pad.PaddingLeft = UDim.new(0, 6)
-    pad.PaddingRight = UDim.new(0, 6)
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingBottom = UDim.new(0, 12)
+    pad.PaddingLeft = UDim.new(0, 4)
+    pad.PaddingRight = UDim.new(0, 8)
     pad.Parent = page
 
     pages[name] = page
 
     btn.MouseButton1Click:Connect(function()
+        for _, b in pairs(tabButtons) do
+            local ind = b:FindFirstChild("Ind")
+            if ind then ind.Visible = false end
+        end
+        indicator.Visible = true
         showTab(name)
+    end)
+
+    btn.MouseEnter:Connect(function()
+        if currentTab ~= name then
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.Hover})
+        end
+    end)
+    btn.MouseLeave:Connect(function()
+        if currentTab ~= name then
+            tween(btn, TI_Fast, {BackgroundColor3 = Theme.ToggleOff})
+        end
     end)
 
     return page
@@ -1272,11 +1369,11 @@ end
 
 local function section(page, text)
     local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, 0, 0, 22)
+    l.Size = UDim2.new(1, 0, 0, 20)
     l.BackgroundTransparency = 1
-    l.Text = text
+    l.Text = text:upper()
     l.Font = Enum.Font.GothamBold
-    l.TextSize = 13
+    l.TextSize = 11
     l.TextColor3 = Theme.Accent2
     l.TextXAlignment = Enum.TextXAlignment.Left
     l.Parent = page
@@ -1285,14 +1382,14 @@ end
 
 local function toggle(page, title, default, callback)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 34)
+    row.Size = UDim2.new(1, 0, 0, 36)
     row.BackgroundColor3 = Theme.Bg
     row.BorderSizePixel = 0
     row.Parent = page
-    corner(row, 8)
+    corner(row, 9)
 
     local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -60, 1, 0)
+    lbl.Size = UDim2.new(1, -64, 1, 0)
     lbl.Position = UDim2.fromOffset(12, 0)
     lbl.BackgroundTransparency = 1
     lbl.Text = title
@@ -1304,17 +1401,18 @@ local function toggle(page, title, default, callback)
 
     local state = default and true or false
     local sw = Instance.new("TextButton")
-    sw.Size = UDim2.fromOffset(42, 22)
-    sw.Position = UDim2.new(1, -50, 0.5, -11)
+    sw.Size = UDim2.fromOffset(44, 24)
+    sw.Position = UDim2.new(1, -52, 0.5, -12)
     sw.BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff
     sw.BorderSizePixel = 0
     sw.Text = ""
+    sw.AutoButtonColor = false
     sw.Parent = row
-    corner(sw, 11)
+    corner(sw, 12)
 
     local knob = Instance.new("Frame")
     knob.Size = UDim2.fromOffset(18, 18)
-    knob.Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.fromOffset(2, 2)
+    knob.Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.fromOffset(3, 3)
     knob.BackgroundColor3 = Theme.Text
     knob.BorderSizePixel = 0
     knob.Parent = sw
@@ -1322,29 +1420,27 @@ local function toggle(page, title, default, callback)
 
     sw.MouseButton1Click:Connect(function()
         state = not state
-        sw.BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff
-        knob.Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.fromOffset(2, 2)
+        tween(sw, TI_Fast, {BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff})
+        tween(knob, TI_Spring, {Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.fromOffset(3, 3)})
         if callback then callback(state) end
     end)
-
-    return function(v)
-        state = v
-        sw.BackgroundColor3 = state and Theme.ToggleOn or Theme.ToggleOff
-        knob.Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.fromOffset(2, 2)
-    end
 end
 
 local function button(page, title, callback)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 0, 34)
+    b.Size = UDim2.new(1, 0, 0, 36)
     b.BackgroundColor3 = Theme.Accent
     b.BorderSizePixel = 0
     b.Text = title
     b.Font = Enum.Font.GothamBold
     b.TextSize = 13
     b.TextColor3 = Theme.Text
+    b.AutoButtonColor = false
     b.Parent = page
-    corner(b, 8)
+    corner(b, 9)
+    gradient(b, Theme.Accent, Theme.Accent2, 0)
+    b.MouseEnter:Connect(function() tween(b, TI_Fast, {Size = UDim2.new(1, 0, 0, 38)}) end)
+    b.MouseLeave:Connect(function() tween(b, TI_Fast, {Size = UDim2.new(1, 0, 0, 36)}) end)
     b.MouseButton1Click:Connect(function()
         if callback then callback() end
     end)
@@ -1353,15 +1449,15 @@ end
 
 local function slider(page, title, minV, maxV, default, callback)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 52)
+    row.Size = UDim2.new(1, 0, 0, 54)
     row.BackgroundColor3 = Theme.Bg
     row.BorderSizePixel = 0
     row.Parent = page
-    corner(row, 8)
+    corner(row, 9)
 
     local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.7, 0, 0, 20)
-    lbl.Position = UDim2.fromOffset(12, 4)
+    lbl.Size = UDim2.new(0.65, 0, 0, 20)
+    lbl.Position = UDim2.fromOffset(12, 6)
     lbl.BackgroundTransparency = 1
     lbl.Text = title
     lbl.Font = Enum.Font.Gotham
@@ -1371,8 +1467,8 @@ local function slider(page, title, minV, maxV, default, callback)
     lbl.Parent = row
 
     local valLbl = Instance.new("TextLabel")
-    valLbl.Size = UDim2.new(0.3, -12, 0, 20)
-    valLbl.Position = UDim2.new(0.7, 0, 0, 4)
+    valLbl.Size = UDim2.new(0.35, -12, 0, 20)
+    valLbl.Position = UDim2.new(0.65, 0, 0, 6)
     valLbl.BackgroundTransparency = 1
     valLbl.Text = tostring(default)
     valLbl.Font = Enum.Font.GothamBold
@@ -1383,7 +1479,7 @@ local function slider(page, title, minV, maxV, default, callback)
 
     local track = Instance.new("Frame")
     track.Size = UDim2.new(1, -24, 0, 6)
-    track.Position = UDim2.new(0, 12, 0, 34)
+    track.Position = UDim2.new(0, 12, 0, 36)
     track.BackgroundColor3 = Theme.ToggleOff
     track.BorderSizePixel = 0
     track.Parent = row
@@ -1396,18 +1492,16 @@ local function slider(page, title, minV, maxV, default, callback)
     fill.BorderSizePixel = 0
     fill.Parent = track
     corner(fill, 3)
+    gradient(fill, Theme.Accent, Theme.Accent2, 0)
 
-    local value = default
-    local sliding = false
-
+    local value, sliding = default, false
     local function setFromX(x)
-        local rel = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        local rel = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
         value = math.floor(minV + rel * (maxV - minV) + 0.5)
         fill.Size = UDim2.new(rel, 0, 1, 0)
         valLbl.Text = tostring(value)
         if callback then callback(value) end
     end
-
     track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             sliding = true
@@ -1415,8 +1509,7 @@ local function slider(page, title, minV, maxV, default, callback)
         end
     end)
     UserInputService.InputChanged:Connect(function(input)
-        if not sliding then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             setFromX(input.Position.X)
         end
     end)
@@ -1433,44 +1526,53 @@ local function rarityRow(page)
     wrap.AutomaticSize = Enum.AutomaticSize.Y
     wrap.BackgroundTransparency = 1
     wrap.Parent = page
-
     local grid = Instance.new("UIGridLayout")
-    grid.CellSize = UDim2.fromOffset(110, 28)
+    grid.CellSize = UDim2.fromOffset(112, 30)
     grid.CellPadding = UDim2.fromOffset(6, 6)
     grid.Parent = wrap
-
     for _, r in ipairs(SNIPE_RARITIES) do
         local on = STATE.SNIPE_SELECTED[r] == true
         local b = Instance.new("TextButton")
         b.BackgroundColor3 = on and Theme.ToggleOn or Theme.ToggleOff
         b.BorderSizePixel = 0
         b.Text = r
-        b.Font = Enum.Font.Gotham
+        b.Font = Enum.Font.GothamMedium
         b.TextSize = 11
         b.TextColor3 = Theme.Text
+        b.AutoButtonColor = false
         b.Parent = wrap
-        corner(b, 6)
+        corner(b, 7)
         b.MouseButton1Click:Connect(function()
             STATE.SNIPE_SELECTED[r] = not STATE.SNIPE_SELECTED[r]
-            b.BackgroundColor3 = STATE.SNIPE_SELECTED[r] and Theme.ToggleOn or Theme.ToggleOff
+            tween(b, TI_Fast, {BackgroundColor3 = STATE.SNIPE_SELECTED[r] and Theme.ToggleOn or Theme.ToggleOff})
         end)
     end
 end
 
--- Notify helper
+-- Toast notify
 local function notify(title, content)
     local n = Instance.new("Frame")
-    n.Size = UDim2.fromOffset(260, 60)
-    n.Position = UDim2.new(1, -280, 0, 20)
+    n.Size = UDim2.fromOffset(0, 64)
+    n.Position = UDim2.new(1, -20, 0, 18)
+    n.AnchorPoint = Vector2.new(1, 0)
     n.BackgroundColor3 = Theme.Panel
     n.BorderSizePixel = 0
+    n.ClipsDescendants = true
     n.Parent = ScreenGui
-    corner(n, 10)
-    stroke(n, Theme.Accent, 1.5)
+    corner(n, 12)
+    stroke(n, Theme.Accent, 1.5, 0.2)
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0, 3, 1, -12)
+    bar.Position = UDim2.fromOffset(6, 6)
+    bar.BackgroundColor3 = Theme.Accent
+    bar.BorderSizePixel = 0
+    bar.Parent = n
+    corner(bar, 2)
 
     local t = Instance.new("TextLabel")
-    t.Size = UDim2.new(1, -16, 0, 22)
-    t.Position = UDim2.fromOffset(10, 6)
+    t.Size = UDim2.new(1, -24, 0, 22)
+    t.Position = UDim2.fromOffset(16, 8)
     t.BackgroundTransparency = 1
     t.Text = title
     t.Font = Enum.Font.GothamBold
@@ -1480,8 +1582,8 @@ local function notify(title, content)
     t.Parent = n
 
     local c = Instance.new("TextLabel")
-    c.Size = UDim2.new(1, -16, 0, 24)
-    c.Position = UDim2.fromOffset(10, 28)
+    c.Size = UDim2.new(1, -24, 0, 22)
+    c.Position = UDim2.fromOffset(16, 30)
     c.BackgroundTransparency = 1
     c.Text = content
     c.Font = Enum.Font.Gotham
@@ -1491,21 +1593,25 @@ local function notify(title, content)
     c.TextTruncate = Enum.TextTruncate.AtEnd
     c.Parent = n
 
-    task.delay(3.5, function()
-        if n and n.Parent then n:Destroy() end
+    tween(n, TI_Spring, {Size = UDim2.fromOffset(270, 64)})
+    task.delay(3.2, function()
+        if n and n.Parent then
+            local tw = tween(n, TI_Med, {Size = UDim2.fromOffset(0, 64), BackgroundTransparency = 1})
+            tw.Completed:Wait()
+            n:Destroy()
+        end
     end)
 end
-
 _G.BrainrotNotify = notify
 
--- Tabs content
-local MainPage = createTab("Main")
-local FarmPage = createTab("Farm")
-local SnipePage = createTab("Snipe")
-local ESPPage = createTab("ESP")
-local MiscPage = createTab("Misc")
-local BasePage = createTab("Base")
-local RoboPage = createTab("Robo")
+-- Build tabs
+local MainPage = createTab("Main", 1)
+local FarmPage = createTab("Farm", 2)
+local SnipePage = createTab("Snipe", 3)
+local ESPPage = createTab("ESP", 4)
+local MiscPage = createTab("Misc", 5)
+local BasePage = createTab("Base", 6)
+local RoboPage = createTab("Robo", 7)
 
 section(MainPage, "Auto")
 toggle(MainPage, "Auto Scan", true, function(v) STATE.AUTO_SCAN_ON = v end)
@@ -1590,26 +1696,83 @@ button(RoboPage, "Equipar bate ahora", function()
     notify("Auto-Bate", "Intentado equipar")
 end)
 
+-- default tab indicator
+do
+    local b = tabButtons["Main"]
+    if b and b:FindFirstChild("Ind") then b.Ind.Visible = true end
+end
 showTab("Main")
 
--- Floating best clown
+-- ===== MINIMIZE / CLOSE / OPEN animations =====
+local uiOpen = true
+local savedPos = Main.Position
+
+local function openUI()
+    uiOpen = true
+    OpenBtn.Visible = false
+    Main.Visible = true
+    Main.Size = UDim2.fromOffset(WIN_W, 0)
+    Body.Visible = true
+    tween(Main, TI_Spring, {Size = UDim2.fromOffset(WIN_W, WIN_H)})
+end
+
+local function minimizeUI()
+    uiOpen = false
+    savedPos = Main.Position
+    local tw = tween(Main, TI_Med, {Size = UDim2.fromOffset(WIN_W, 0)})
+    tw.Completed:Connect(function()
+        Main.Visible = false
+        OpenBtn.Visible = true
+        OpenBtn.Size = UDim2.fromOffset(0, 0)
+        tween(OpenBtn, TI_Spring, {Size = UDim2.fromOffset(38, 38)})
+    end)
+end
+
+local function closeUI()
+    uiOpen = false
+    local tw = tween(Main, TI_Med, {
+        Size = UDim2.fromOffset(0, 0),
+        Position = UDim2.new(Main.Position.X.Scale, Main.Position.X.Offset + WIN_W/2,
+                             Main.Position.Y.Scale, Main.Position.Y.Offset + WIN_H/2),
+    })
+    tw.Completed:Connect(function()
+        Main.Visible = false
+        Main.Position = savedPos
+        OpenBtn.Visible = true
+        OpenBtn.Size = UDim2.fromOffset(0, 0)
+        tween(OpenBtn, TI_Spring, {Size = UDim2.fromOffset(38, 38)})
+    end)
+end
+
+MinBtn.MouseButton1Click:Connect(minimizeUI)
+CloseBtn.MouseButton1Click:Connect(closeUI)
+OpenBtn.MouseButton1Click:Connect(openUI)
+
+-- Floating best clown card
 local FF = Instance.new("Frame")
-FF.Size = UDim2.fromOffset(260, 100)
-FF.Position = UDim2.fromOffset(16, 16)
+FF.Size = UDim2.fromOffset(250, 96)
+FF.Position = UDim2.fromOffset(14, 14)
 FF.BackgroundColor3 = Theme.Panel
 FF.BorderSizePixel = 0
 FF.Parent = ScreenGui
-corner(FF, 10)
-stroke(FF, Theme.Accent, 1.2)
+corner(FF, 12)
+stroke(FF, Theme.Accent, 1.2, 0.25)
 makeDraggable(FF)
 
+local ffTop = Instance.new("Frame")
+ffTop.Size = UDim2.new(1, 0, 0, 3)
+ffTop.BackgroundColor3 = Theme.Accent
+ffTop.BorderSizePixel = 0
+ffTop.Parent = FF
+gradient(ffTop, Theme.Accent, Theme.Accent2, 0)
+
 local FTitle = Instance.new("TextLabel")
-FTitle.Size = UDim2.new(1, -12, 0, 20)
-FTitle.Position = UDim2.fromOffset(10, 6)
+FTitle.Size = UDim2.new(1, -12, 0, 18)
+FTitle.Position = UDim2.fromOffset(10, 8)
 FTitle.BackgroundTransparency = 1
-FTitle.Text = "Mejor Payaso"
+FTitle.Text = "MEJOR PAYASO"
 FTitle.Font = Enum.Font.GothamBold
-FTitle.TextSize = 13
+FTitle.TextSize = 11
 FTitle.TextColor3 = Theme.Accent2
 FTitle.TextXAlignment = Enum.TextXAlignment.Left
 FTitle.Parent = FF
@@ -1627,19 +1790,19 @@ FName.TextTruncate = Enum.TextTruncate.AtEnd
 FName.Parent = FF
 
 local FMoney = Instance.new("TextLabel")
-FMoney.Size = UDim2.new(1, -12, 0, 18)
+FMoney.Size = UDim2.new(1, -100, 0, 16)
 FMoney.Position = UDim2.fromOffset(10, 50)
 FMoney.BackgroundTransparency = 1
 FMoney.Text = "$0/s"
-FMoney.Font = Enum.Font.Gotham
+FMoney.Font = Enum.Font.GothamMedium
 FMoney.TextSize = 13
 FMoney.TextColor3 = Theme.Success
 FMoney.TextXAlignment = Enum.TextXAlignment.Left
 FMoney.Parent = FF
 
 local FPlot = Instance.new("TextLabel")
-FPlot.Size = UDim2.new(1, -100, 0, 16)
-FPlot.Position = UDim2.fromOffset(10, 72)
+FPlot.Size = UDim2.new(1, -100, 0, 14)
+FPlot.Position = UDim2.fromOffset(10, 70)
 FPlot.BackgroundTransparency = 1
 FPlot.Text = "Plot: - | Slot: -"
 FPlot.Font = Enum.Font.Gotham
@@ -1649,16 +1812,17 @@ FPlot.TextXAlignment = Enum.TextXAlignment.Left
 FPlot.Parent = FF
 
 local FBtn = Instance.new("TextButton")
-FBtn.Size = UDim2.fromOffset(80, 22)
-FBtn.Position = UDim2.new(1, -90, 1, -28)
+FBtn.Size = UDim2.fromOffset(78, 24)
+FBtn.Position = UDim2.new(1, -88, 1, -32)
 FBtn.BackgroundColor3 = Theme.Accent
 FBtn.BorderSizePixel = 0
 FBtn.Text = "Ir (+grab)"
 FBtn.Font = Enum.Font.GothamBold
 FBtn.TextSize = 11
 FBtn.TextColor3 = Theme.Text
+FBtn.AutoButtonColor = false
 FBtn.Parent = FF
-corner(FBtn, 6)
+corner(FBtn, 7)
 FBtn.MouseButton1Click:Connect(function()
     if STATE.BEST_CLOWN then tpToClown(STATE.BEST_CLOWN, true) end
 end)
@@ -1681,29 +1845,29 @@ end)
 
 -- Reason panel
 local RFrame = Instance.new("Frame")
-RFrame.Size = UDim2.fromOffset(250, 90)
-RFrame.Position = UDim2.fromOffset(16, 130)
-RFrame.BackgroundColor3 = Color3.fromRGB(30, 14, 14)
+RFrame.Size = UDim2.fromOffset(240, 88)
+RFrame.Position = UDim2.fromOffset(14, 122)
+RFrame.BackgroundColor3 = Color3.fromRGB(28, 12, 16)
 RFrame.BorderSizePixel = 0
 RFrame.Visible = false
 RFrame.Parent = ScreenGui
-corner(RFrame, 10)
-stroke(RFrame, Theme.Accent, 1.2)
+corner(RFrame, 12)
+stroke(RFrame, Theme.Accent, 1.2, 0.2)
 makeDraggable(RFrame)
 
 local RTitle = Instance.new("TextLabel")
-RTitle.Size = UDim2.new(1, -12, 0, 18)
-RTitle.Position = UDim2.fromOffset(10, 6)
+RTitle.Size = UDim2.new(1, -12, 0, 16)
+RTitle.Position = UDim2.fromOffset(10, 8)
 RTitle.BackgroundTransparency = 1
-RTitle.Text = "Razon"
+RTitle.Text = "RAZON"
 RTitle.Font = Enum.Font.GothamBold
-RTitle.TextSize = 12
+RTitle.TextSize = 11
 RTitle.TextColor3 = Theme.Accent
 RTitle.TextXAlignment = Enum.TextXAlignment.Left
 RTitle.Parent = RFrame
 
 local RText = Instance.new("TextLabel")
-RText.Size = UDim2.new(1, -12, 0, 36)
+RText.Size = UDim2.new(1, -12, 0, 34)
 RText.Position = UDim2.fromOffset(10, 26)
 RText.BackgroundTransparency = 1
 RText.Text = "-"
@@ -1716,8 +1880,8 @@ RText.TextWrapped = true
 RText.Parent = RFrame
 
 local RKick = Instance.new("TextButton")
-RKick.Size = UDim2.fromOffset(100, 20)
-RKick.Position = UDim2.new(1, -110, 1, -26)
+RKick.Size = UDim2.fromOffset(96, 20)
+RKick.Position = UDim2.new(1, -106, 1, -26)
 RKick.BackgroundColor3 = Theme.Accent
 RKick.BorderSizePixel = 0
 RKick.Text = "Kickearme"
@@ -1733,15 +1897,23 @@ end)
 _G.BrainrotShowReason = function(r)
     RText.Text = tostring(r)
     RFrame.Visible = true
+    RFrame.Size = UDim2.fromOffset(0, 88)
+    tween(RFrame, TI_Spring, {Size = UDim2.fromOffset(240, 88)})
 end
 
--- Toggle GUI with RightShift
+-- RightShift toggle
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
-        Main.Visible = not Main.Visible
+        if uiOpen then minimizeUI() else openUI() end
     end
 end)
 
-notify("Brainrot Ultimate", "GUI lista · RightShift para ocultar")
-print("[Brainrot Ultimate] GUI propia cargada")
+-- intro animation
+Main.Size = UDim2.fromOffset(WIN_W, 0)
+task.defer(function()
+    tween(Main, TI_Spring, {Size = UDim2.fromOffset(WIN_W, WIN_H)})
+end)
+
+notify("Brainrot Ultimate", "GUI lista · RightShift / botón B")
+print("[Brainrot Ultimate] GUI animada cargada")
